@@ -1,7 +1,9 @@
 from flask import request
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
+
 from .utils.decorator import role_required
+from .utils.helper import is_valid_date
 from .query.q_userbatch import *
 
 userbatch_ns = Namespace("userbatch", description="Manajemen pendaftaran peserta ke batch")
@@ -31,10 +33,12 @@ class UserBatchListResource(Resource):
         """Akses: (admin), Tambah peserta ke batch"""
         payload = request.get_json()
 
-        if not is_valid_peserta(payload["id_user"]):
-            return {"status": "error", "message": "Peserta tidak valid"}, 400
-        if not is_valid_batch(payload["id_batch"]):
+        if not is_valid_peserta(payload["id_user"]): # Validasi peserta
+            return {"status": "error", "message": "Peserta tidak ditemukan"}, 400
+        if not is_valid_batch(payload["id_batch"]): # Validasi batch
             return {"status": "error", "message": "Batch tidak ditemukan"}, 400
+        if not is_valid_date(payload.get("tanggal_join", "")): # Validasi format tanggal
+            return {"status": "error", "message": "Format tanggal_join tidak valid (YYYY-MM-DD)"}, 400
 
         try:
             created = insert_userbatch(payload)

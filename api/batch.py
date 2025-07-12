@@ -2,7 +2,7 @@ from flask import request
 from flask_restx import Namespace, Resource, fields
 
 from api.query.q_batch import *
-
+from .utils.helper import is_valid_date
 from .utils.decorator import role_required
 
 
@@ -32,6 +32,13 @@ class BatchListResource(Resource):
     def post(self):
         """Akses: (admin), Tambah batch baru"""
         payload = request.get_json()
+        # Validasi format tanggal
+        if not is_valid_date(payload.get("tanggal_mulai", "")):
+            return {"status": "error", "message": "Format tanggal_mulai tidak valid (YYYY-MM-DD)"}, 400
+
+        if not is_valid_date(payload.get("tanggal_selesai", "")):
+            return {"status": "error", "message": "Format tanggal_selesai tidak valid (YYYY-MM-DD)"}, 400
+
         try:
             created = insert_batch(payload)
             if not created:

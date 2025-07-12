@@ -1,3 +1,4 @@
+from datetime import timedelta
 import os
 from dotenv import load_dotenv
 from flask import Flask
@@ -26,7 +27,7 @@ CORS(api)
 load_dotenv()
 
 api.config['JWT_SECRET_KEY'] = os.getenv("JWT_SECRET_KEY")
-# api.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=3)  # waktu login sesi
+api.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=12)  # waktu login sesi
 api.config['JWT_BLACKLIST_ENABLED'] = True
 api.config['JWT_BLACKLIST_TOKEN_CHECKS'] = ['access', 'refresh']
 

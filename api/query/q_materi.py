@@ -1,5 +1,7 @@
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
+
+from ..utils.helper import serialize_row
 from ..utils.config import get_connection, get_wita
 
 def is_valid_modul(id_modul):
@@ -24,7 +26,7 @@ def get_all_materi():
                 WHERE m.status = 1
                 ORDER BY m.created_at DESC
             """)).mappings().fetchall()
-            return [dict(row) for row in result]
+            return [serialize_row(row) for row in result]
     except SQLAlchemyError as e:
         print(f"Error: {e}")
         return []
@@ -39,7 +41,7 @@ def get_materi_by_id(id_materi):
                 JOIN modul mo ON m.id_modul = mo.id_modul
                 WHERE m.id_materi = :id AND m.status = 1
             """), {"id": id_materi}).mappings().fetchone()
-            return dict(result) if result else None
+            return serialize_row(result) if result else None
     except SQLAlchemyError:
         return None
 
