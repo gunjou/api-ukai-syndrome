@@ -1,5 +1,7 @@
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
+
+from ..utils.helper import serialize_row
 from ..utils.config import get_connection, get_wita
 
 
@@ -13,7 +15,7 @@ def get_all_batch():
                 WHERE status = 1
                 ORDER BY tanggal_mulai DESC
             """)).mappings().fetchall()
-            return [dict(row) for row in result]
+            return [serialize_row(row) for row in result]
     except SQLAlchemyError as e:
         print(f"Error: {e}")
         return []
@@ -28,7 +30,7 @@ def get_batch_by_id(id_batch):
                 FROM batch
                 WHERE id_batch = :id_batch AND status = 1
             """), {"id_batch": id_batch}).mappings().fetchone()
-            return dict(result) if result else None
+            return [serialize_row(row) for row in result]
     except SQLAlchemyError as e:
         print(f"Error: {e}")
         return None

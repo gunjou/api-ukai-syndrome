@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 
 def is_valid_date(date_str):
@@ -11,6 +11,6 @@ def is_valid_date(date_str):
     
 def serialize_row(row):
     return {
-        key: value.isoformat() if isinstance(value, datetime) else value
+        key: value.strftime("%Y-%m-%d") if isinstance(value, (datetime, date)) else value
         for key, value in row.items()
     }
