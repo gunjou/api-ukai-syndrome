@@ -30,7 +30,7 @@ def get_batch_by_id(id_batch):
                 FROM batch
                 WHERE id_batch = :id_batch AND status = 1
             """), {"id_batch": id_batch}).mappings().fetchone()
-            return [serialize_row(row) for row in result]
+            return serialize_row(result) if result else None
     except SQLAlchemyError as e:
         print(f"Error: {e}")
         return None
