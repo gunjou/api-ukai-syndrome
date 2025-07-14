@@ -1,9 +1,12 @@
 from flask import request
+from flask_jwt_extended import get_jwt_identity, jwt_required
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
 
+
 from .utils.decorator import role_required
 from .utils.helper import is_valid_date
+from .query.q_batch import get_batch_by_id
 from .query.q_userbatch import *
 
 userbatch_ns = Namespace("userbatch", description="Manajemen pendaftaran peserta ke batch")
@@ -14,13 +17,21 @@ userbatch_model = userbatch_ns.model("UserBatch", {
     "tanggal_join": fields.String(required=True, description="Tanggal join (YYYY-MM-DD HH:MM:SS)")
 })
 
+enroll_model = userbatch_ns.model("EnrollBatch", {
+    "id_batch": fields.Integer(required=True, description="ID Batch yang akan dienroll")
+})
+
+
 @userbatch_ns.route('')
 class UserBatchListResource(Resource):
+    @userbatch_ns.param('status_enroll', 'Filter status enroll (pending, approved, rejected)', required=False)
     @role_required('admin')
     def get(self):
-        """Akses: (admin), Ambil semua pendaftaran peserta ke batch"""
+        """Akses: (admin), Ambil semua pendaftaran peserta ke batch (dengan filter status_enroll opsional)"""
+        status_enroll = request.args.get('status_enroll')  # bisa 'pending', 'approved', 'rejected'
+        
         try:
-            result = get_all_userbatch()
+            result = get_all_userbatch(status_enroll)
             if not result:
                 return {"status": "error", "message": "Tidak ada data"}, 404
             return {"data": result}, 200
@@ -97,5 +108,40 @@ class UserBatchDetailResource(Resource):
             if not deleted:
                 return {"status": "error", "message": "Data tidak ditemukan"}, 404
             return {"status": "Pendaftaran berhasil dihapus"}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+        
+
+"""#=== Peserta ===#"""
+@userbatch_ns.route('/<int:id_batch>/peserta')
+class PesertaByBatchResource(Resource):
+    @role_required("admin")
+    def get(self, id_batch):
+        """Akses: (admin) Melihat semua peserta dalam 1 batch"""
+        try:
+            batch = get_batch_by_id(id_batch)
+            peserta = get_peserta_by_batch(id_batch)
+            if not peserta:
+                return {"status": "error", "peserta": [], "message": "Belum ada peserta di batch ini"}, 200
+            return {"status": "success", "batch": batch, "peserta": peserta}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+
+
+@userbatch_ns.route('/enroll')
+class EnrollBatchResource(Resource):
+    @role_required('peserta')
+    @userbatch_ns.expect(enroll_model)
+    def post(self):
+        """Akses: (peserta), Mendaftar ke batch tertentu"""
+        data = request.get_json()
+        id_user = get_jwt_identity()
+        id_batch = data.get("id_batch")
+
+        try:
+            result = insert_userbatch_enroll(id_user, id_batch)
+            if "error" in result:
+                return {"status": "error", "message": result["error"]}, 400
+            return {"status": "success", "message": "Pendaftaran batch berhasil, menunggu persetujuan"}, 201
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500

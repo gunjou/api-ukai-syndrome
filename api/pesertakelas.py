@@ -1,9 +1,12 @@
 from flask import request
+from flask_jwt_extended import jwt_required
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
 
+from .query.q_paketkelas import get_kelas_by_id
 from .query.q_pesertakelas import *
 from .utils.decorator import role_required
+
 
 pesertakelas_ns = Namespace("pesertakelas", description="Relasi peserta dengan kelas")
 
@@ -72,4 +75,20 @@ class PesertaKelasDetailResource(Resource):
                 return {"status": "error", "message": "Data tidak ditemukan"}, 404
             return {"status": f"{deleted['id_user']} berhasil dihapus"}, 200
         except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+
+
+"""#=== Peserta ===#"""
+@pesertakelas_ns.route("/<int:id_kelas>/peserta")
+class PesertaKelasResource(Resource):
+    @jwt_required()
+    def get(self, id_kelas):
+        """Akses: (admin, mentor, peserta), Ambil semua peserta dari suatu kelas"""
+        try:
+            paket_kelas = get_kelas_by_id(id_kelas)
+            peserta = get_peserta_by_kelas(id_kelas)
+            if not peserta:
+                return {"status": "success", "peserta": [], "message": "Belum ada peserta di kelas ini"}, 200
+            return {"kelas": paket_kelas, "peserta": peserta }, 200
+        except Exception as e:
             return {"status": "error", "message": str(e)}, 500

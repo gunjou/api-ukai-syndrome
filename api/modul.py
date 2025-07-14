@@ -1,4 +1,5 @@
 from flask import request
+from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
 from .utils.decorator import role_required
@@ -13,41 +14,65 @@ modul_model = modul_ns.model("Modul", {
     "urutan_modul": fields.Integer(required=True, description="Urutan Modul")
 })
 
+visibility_model = modul_ns.model("ModulVisibility", {
+    "visibility": fields.String(required=True, description="Nilai visibility (open/hold/close)")
+})
+
 @modul_ns.route('')
 class ModulListResource(Resource):
-    @role_required('admin')
+    @role_required(['admin', 'mentor'])
     def get(self):
-        """Akses: (admin), Ambil semua modul"""
+        """Akses: (admin/mentor), Ambil semua modul"""
+        id_user = get_jwt_identity()
+        role = get_jwt()['role']
         try:
-            result = get_all_modul()
+            if role == 'admin':
+                result = get_all_modul_admin()
+            else:
+                result = get_all_modul_by_mentor(id_user)
             if not result:
                 return {"status": "error", "message": "Tidak ada modul ditemukan"}, 404
             return {"data": result}, 200
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
-    @role_required('admin')
+    @role_required(['admin', 'mentor'])
     @modul_ns.expect(modul_model)
     def post(self):
-        """Akses: (admin), Tambah modul baru"""
-        payload = request.get_json()
+        """Akses: (admin/mentor), Tambah modul (mentor hanya boleh untuk kelas yang diampu)"""
+        data = request.get_json()
+        id_user = get_jwt_identity()
+        role = get_jwt()['role']
 
-        if not is_valid_paketkelas(payload["id_paketkelas"]):
-            return {"status": "error", "message": "Paket kelas tidak ditemukan"}, 400
+        # Validasi paket kelas
+        if not is_valid_paketkelas(data.get("id_paketkelas")):
+            return {"status": "error", "message": "Paket kelas tidak valid"}, 400
+
+        # Validasi hak akses mentor
+        if role == 'mentor' and not is_mentor_of_kelas(id_user, data["id_paketkelas"]):
+            return {"status": "error", "message": "Akses ditolak. Anda bukan mentor di kelas ini."}, 403
+
+        payload = {
+            "id_paketkelas": data['id_paketkelas'],
+            "judul": data['judul'],
+            "deskripsi": data['deskripsi'],
+            "urutan_modul": data['urutan_modul'],
+            "visibility": data.get("visibility", "hold")
+        }
 
         try:
-            created = insert_modul(payload)
-            if not created:
+            result = insert_modul(payload)
+            if not result:
                 return {"status": "error", "message": "Gagal menambahkan modul"}, 400
-            return {"status": f"Modul '{created['judul']}' berhasil ditambahkan", "data": created}, 201
+            return {"status": f"Modul '{result['judul']}' berhasil ditambahkan", "data": result}, 201
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
 @modul_ns.route('/<int:id_modul>')
 class ModulDetailResource(Resource):
-    @role_required('admin')
+    @role_required(['admin', 'mentor'])
     def get(self, id_modul):
-        """Akses: (admin), Ambil data modul berdasarkan ID"""
+        """Akses: (admin/mentor), Ambil data modul berdasarkan ID"""
         try:
             modul = get_modul_by_id(id_modul)
             if not modul:
@@ -56,22 +81,30 @@ class ModulDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
-    @role_required('admin')
+    @role_required(['admin', 'mentor'])
     @modul_ns.expect(modul_model, validate=False)
     def put(self, id_modul):
-        """Akses: (admin), Ubah data modul"""
+        """Akses: (admin/mentor), Edit modul (mentor hanya modul dari kelasnya)"""
+        id_user = get_jwt_identity()
+        role = get_jwt()['role']
         data = request.get_json()
+
         old = get_modul_by_id(id_modul)
         if not old:
             return {"status": "error", "message": "Modul tidak ditemukan"}, 404
+
+        # Validasi akses mentor
+        if role == 'mentor' and not is_mentor_of_kelas(id_user, old["id_paketkelas"]):
+            return {"status": "error", "message": "Anda tidak punya akses ke modul ini"}, 403
 
         updated = {
             "id_paketkelas": data.get("id_paketkelas", old["id_paketkelas"]),
             "judul": data.get("judul", old["judul"]),
             "deskripsi": data.get("deskripsi", old["deskripsi"]),
-            "urutan_modul": data.get("urutan_modul", old["urutan_modul"])
+            "urutan_modul": data.get("urutan_modul", old["urutan_modul"]),
         }
 
+        # Validasi id_paketkelas
         if not is_valid_paketkelas(updated["id_paketkelas"]):
             return {"status": "error", "message": "Paket kelas tidak valid"}, 400
 
@@ -83,13 +116,65 @@ class ModulDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
-    @role_required('admin')
+    @role_required(['admin', 'mentor'])
     def delete(self, id_modul):
-        """Akses: (admin), Nonaktifkan modul"""
+        """Akses: (admin/mentor), Hapus modul (mentor hanya kelasnya sendiri)"""
+        id_user = get_jwt_identity()
+        role = get_jwt()['role']
+
+        modul = get_modul_by_id(id_modul)
+        if not modul:
+            return {"status": "error", "message": "Modul tidak ditemukan"}, 404
+
+        if role == 'mentor' and not is_mentor_of_kelas(id_user, modul["id_paketkelas"]):
+            return {"status": "error", "message": "Anda tidak punya akses menghapus modul ini"}, 403
+
         try:
-            deleted = delete_modul(id_modul)
-            if not deleted:
-                return {"status": "error", "message": "Modul tidak ditemukan"}, 404
-            return {"status": f"Modul '{deleted['judul']}' berhasil dihapus"}, 200
+            result = delete_modul(id_modul)
+            if not result:
+                return {"status": "error", "message": "Gagal menghapus modul"}, 400
+            return {"status": f"Modul '{result['judul']}' berhasil dihapus"}, 200
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
+
+
+"""#=== Endpoint tambahan ===#"""
+@modul_ns.route('/user')
+class ModulByUserResource(Resource):
+    # @jwt_required()
+    @role_required(['mentor', 'peserta'])
+    def get(self):
+        """Akses: (mentor/peserta), Melihat list modul dari kelas yang diikuti/diampu"""
+        id_user = get_jwt_identity()
+        role = get_jwt().get("role")
+
+        try:
+            result = get_modul_by_user(id_user, role)
+            return {"status": "success", "data": result}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+        
+
+@modul_ns.route('/<int:id_modul>/visibility')
+class ModulVisibilityResource(Resource):
+    @role_required(['admin', 'mentor'])
+    @modul_ns.expect(visibility_model)
+    def put(self, id_modul):
+        """Akses: (admin/mentor), Ubah visibility modul"""
+        data = request.get_json()
+        visibility = data.get("visibility")
+
+        if visibility not in ['open', 'hold', 'close']:
+            return {"status": "error", "message": "Visibility tidak valid"}, 400
+
+        if not get_modul_by_id(id_modul):
+            return {"status": "error", "message": "Modul tidak ditemukan"}, 404
+
+        try:
+            result = update_modul_visibility(id_modul, visibility)
+            if not result:
+                return {"status": "error", "message": "Gagal update visibility"}, 400
+            return {"status": f"Visibility modul '{result['judul']}' berhasil diubah menjadi {visibility}"}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+

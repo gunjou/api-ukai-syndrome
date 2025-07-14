@@ -1,4 +1,5 @@
 from flask import request
+from flask_jwt_extended import get_jwt_identity, jwt_required
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
 from .utils.decorator import role_required
@@ -93,5 +94,21 @@ class MateriDetailResource(Resource):
             if not deleted:
                 return {"status": "error", "message": "Materi tidak ditemukan"}, 404
             return {"status": f"Materi '{deleted['judul']}' berhasil dihapus"}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+
+"""#== Peserta ==#"""
+@materi_ns.route('/user')
+class MateriUserResource(Resource):
+    @jwt_required()
+    @role_required("peserta")
+    def get(self):
+        """Akses: (peserta) Melihat materi yang tersedia untuk user"""
+        id_user = get_jwt_identity()
+        try:
+            result = get_materi_by_user(id_user)
+            if not result:
+                return {"status": "error", "data": [], "message": "Tidak ada materi yang tersedia"}, 200
+            return {"status": "success", "data": result}, 200
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500

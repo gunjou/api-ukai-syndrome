@@ -33,7 +33,7 @@ def get_batch_by_id(id_batch):
             return serialize_row(result) if result else None
     except SQLAlchemyError as e:
         print(f"Error: {e}")
-        return None
+        return []
 
 
 def insert_batch(payload):
@@ -94,3 +94,20 @@ def delete_batch(id_batch):
     except SQLAlchemyError as e:
         print(f"Error: {e}")
         return None
+    
+
+"""#=== Query lainnya (selain CRUD) ===#"""
+def get_batch_terbuka():
+    engine = get_connection()
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT id_batch, nama_batch, tanggal_mulai, tanggal_selesai
+                FROM batch
+                WHERE status = 1 AND tanggal_selesai >= CURRENT_DATE
+                ORDER BY tanggal_mulai ASC
+            """)).mappings().fetchall()
+            return [serialize_row(row) for row in result]
+    except SQLAlchemyError as e:
+        print(f"[get_batch_terbuka] Error: {str(e)}")
+        return []

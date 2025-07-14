@@ -92,3 +92,26 @@ def delete_materi(id_materi):
             return dict(result) if result else None
     except SQLAlchemyError:
         return None
+
+
+""""#== Peserta ==#"""
+def get_materi_by_user(id_user):
+    engine = get_connection()
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, m.viewer_only, m.id_modul
+                FROM materi m
+                JOIN modul mo ON m.id_modul = mo.id_modul
+                JOIN paketkelas pk ON mo.id_paketkelas = pk.id_paketkelas
+                JOIN userbatch ub ON ub.id_user = :id_user
+                JOIN pesertakelas pkls ON pkls.id_user = :id_user
+                WHERE pk.id_batch = ub.id_batch
+                  AND pkls.id_paketkelas = pk.id_paketkelas
+                  AND m.status = 1
+                ORDER BY mo.urutan_modul ASC
+            """), {"id_user": id_user}).mappings().fetchall()
+            return [dict(row) for row in result]
+    except SQLAlchemyError as e:
+        print(f"[get_materi_by_user] Error: {str(e)}")
+        return []

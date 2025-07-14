@@ -56,7 +56,7 @@ class ProtectedResource(Resource):
 class LoginAdminResource(Resource):
     @auth_ns.expect(login_model)
     def post(self):
-        """Login admin menggunakan email + password atau kode pemulihan"""
+        """Akses: (admin/mentor/peserta), login menggunakan email + password"""
         payload = request.get_json()
 
         if not payload['email'] or not payload['password']:

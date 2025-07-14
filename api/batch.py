@@ -94,3 +94,16 @@ class BatchDetailResource(Resource):
             return {"status": f"Batch '{deleted['nama_batch']}' berhasil dihapus"}, 200
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
+        
+
+"""#=== Endpoint lainnya ===#"""
+@batch_ns.route('/terbuka')
+class BatchTerbukaResource(Resource):
+    @role_required('peserta')
+    def get(self):
+        """Akses: (peserta), Melihat batch yang terbuka untuk pendaftaran"""
+        try:
+            result = get_batch_terbuka()
+            return {"status": "success", "data": result}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
