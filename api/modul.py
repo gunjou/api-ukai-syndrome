@@ -142,9 +142,9 @@ class ModulDetailResource(Resource):
 @modul_ns.route('/user')
 class ModulByUserResource(Resource):
     # @jwt_required()
-    @role_required(['mentor', 'peserta'])
+    @role_required('peserta')
     def get(self):
-        """Akses: (mentor/peserta), Melihat list modul dari kelas yang diikuti/diampu"""
+        """Akses: (peserta), Melihat list modul dari kelas yang diikuti/diampu"""
         id_user = get_jwt_identity()
         role = get_jwt().get("role")
 

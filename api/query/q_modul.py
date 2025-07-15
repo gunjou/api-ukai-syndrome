@@ -41,7 +41,7 @@ def get_all_modul_admin():
                 SELECT m.id_modul, m.judul, m.deskripsi, m.urutan_modul, m.visibility,
                        m.id_paketkelas, pk.nama_kelas
                 FROM modul m
-                JOIN paket_kelas pk ON m.id_paketkelas = pk.id_paketkelas
+                JOIN paketkelas pk ON m.id_paketkelas = pk.id_paketkelas
                 WHERE m.status = 1
                 ORDER BY m.urutan_modul
             """)).mappings().fetchall()
@@ -56,7 +56,7 @@ def get_all_modul_by_mentor(id_mentor):
             result = conn.execute(text("""
                 SELECT m.*, pk.nama_kelas 
                 FROM modul m
-                JOIN paket_kelas pk ON m.id_paketkelas = pk.id_paketkelas
+                JOIN paketkelas pk ON m.id_paketkelas = pk.id_paketkelas
                 JOIN mentorkelas mk ON mk.id_paketkelas = pk.id_paketkelas
                 WHERE mk.id_user = :id_mentor AND mk.status = 1 AND m.status = 1
                 ORDER BY m.urutan_modul
