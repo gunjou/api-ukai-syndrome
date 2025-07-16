@@ -4,6 +4,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from ..utils.helper import serialize_row
 from ..utils.config import get_connection, get_wita
 
+
+"""#=== helper ===#"""
 def is_valid_modul(id_modul):
     engine = get_connection()
     try:
@@ -14,7 +16,27 @@ def is_valid_modul(id_modul):
             return result is not None
     except SQLAlchemyError:
         return False
+    
+def is_mentor_of_materi(id_mentor, id_materi):
+    engine = get_connection()
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT 1
+                FROM materi m
+                JOIN modul mo ON m.id_modul = mo.id_modul
+                JOIN paketkelas pk ON mo.id_paketkelas = pk.id_paketkelas
+                JOIN mentorkelas mk ON pk.id_paketkelas = mk.id_paketkelas
+                WHERE m.id_materi = :id_materi
+                AND mk.id_user = :id_mentor
+                AND m.status = 1
+            """), {"id_materi": id_materi, "id_mentor": id_mentor}).first()
+            return result is not None
+    except SQLAlchemyError:
+        return False
 
+
+"""#=== CRUD ===#"""
 def get_all_materi():
     engine = get_connection()
     try:
@@ -94,7 +116,7 @@ def delete_materi(id_materi):
         return None
 
 
-""""#== Peserta ==#"""
+""""#== Query lanjutan ==#"""
 def get_materi_by_user(id_user):
     engine = get_connection()
     try:
@@ -108,10 +130,31 @@ def get_materi_by_user(id_user):
                 JOIN pesertakelas pkls ON pkls.id_user = :id_user
                 WHERE pk.id_batch = ub.id_batch
                   AND pkls.id_paketkelas = pk.id_paketkelas
-                  AND m.status = 1
+                  AND m.visibility = 'open' AND m.status = 1
                 ORDER BY mo.urutan_modul ASC
             """), {"id_user": id_user}).mappings().fetchall()
             return [dict(row) for row in result]
     except SQLAlchemyError as e:
         print(f"[get_materi_by_user] Error: {str(e)}")
         return []
+    
+def update_materi_visibility(id_materi, visibility):
+    engine = get_connection()
+    try:
+        with engine.begin() as conn:
+            now = get_wita()
+            result = conn.execute(text("""
+                UPDATE materi
+                SET visibility = :visibility,
+                    updated_at = :now
+                WHERE id_materi = :id_materi AND status = 1
+                RETURNING id_materi, judul
+            """), {
+                "id_materi": id_materi,
+                "visibility": visibility,
+                "now": now
+            }).mappings().fetchone()
+            return dict(result) if result else None
+    except SQLAlchemyError:
+        return None
+

@@ -1,5 +1,5 @@
 from flask import request
-from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
 from .utils.decorator import role_required
@@ -12,7 +12,12 @@ materi_model = materi_ns.model("Materi", {
     "tipe_materi": fields.String(required=True, description="Jenis materi: video/pdf/file"),
     "judul": fields.String(required=True, description="Judul materi"),
     "url_file": fields.String(required=True, description="URL atau file path"),
+    "visibility": fields.String(required=False, description="Status visibility (default: hold)"),
     "viewer_only": fields.Boolean(required=True, description="Hanya bisa dilihat, tidak bisa diunduh")
+})
+
+visibility_model = materi_ns.model("ModulVisibility", {
+    "visibility": fields.String(required=True, description="Nilai visibility (open/hold/close)")
 })
 
 @materi_ns.route('')
@@ -97,7 +102,7 @@ class MateriDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
-"""#== Peserta ==#"""
+"""#== Endpoints lanjutan ==#"""
 @materi_ns.route('/user')
 class MateriUserResource(Resource):
     @jwt_required()
@@ -112,3 +117,42 @@ class MateriUserResource(Resource):
             return {"status": "success", "data": result}, 200
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
+        
+@materi_ns.route('/<int:id_materi>/visibility')
+class MateriVisibilityResource(Resource):
+    @role_required(['admin', 'mentor'])
+    @materi_ns.expect(visibility_model)
+    def put(self, id_materi):
+        """Akses: (admin/mentor), Ubah visibility materi"""
+        if not request.is_json:
+            return {"status": "error", "message": "Content-Type harus application/json"}, 400
+        
+        data = request.get_json()
+        visibility = data.get("visibility")
+
+        if visibility not in ['open', 'hold', 'close']:
+            return {"status": "error", "message": "Visibility tidak valid"}, 400
+
+        # Cek apakah materi tersedia
+        existing = get_materi_by_id(id_materi)
+        if not existing:
+            return {"status": "error", "message": "Materi tidak ditemukan"}, 404
+
+        # Cek jika user adalah mentor, apakah dia punya akses ke materi
+        current_user_id = get_jwt_identity()
+        current_role = get_jwt()['role']
+        if current_role == 'mentor':
+            from .query.q_materi import is_mentor_of_materi
+            if not is_mentor_of_materi(current_user_id, id_materi):
+                return {"status": "error", "message": "Akses ditolak. Materi bukan milik Anda"}, 403
+
+        try:
+            result = update_materi_visibility(id_materi, visibility)
+            if not result:
+                return {"status": "error", "message": "Gagal mengubah visibility"}, 400
+            return {
+                "status": f"Visibility materi '{result['judul']}' berhasil diubah menjadi {visibility}"
+            }, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+
