@@ -16,3 +16,9 @@ def serialize_row(row):
         key: value.strftime("%Y-%m-%d") if isinstance(value, (datetime, date)) else value
         for key, value in row.items()
     }
+
+def serialize_row_datetime(row):
+    return {
+        key: value.isoformat() if isinstance(value, (datetime, date)) else value
+        for key, value in row.items()
+    }

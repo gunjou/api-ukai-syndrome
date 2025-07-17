@@ -19,6 +19,7 @@ from .userbatch import userbatch_ns
 from .pesertakelas import pesertakelas_ns
 from .modul import modul_ns
 from .materi import materi_ns
+from .komentarmateri import komentarmateri_ns
 
 
 api = Flask(__name__)
@@ -68,3 +69,4 @@ restx_api.add_namespace(userbatch_ns, path="/user-batch")
 restx_api.add_namespace(pesertakelas_ns, path="/peserta-kelas")
 restx_api.add_namespace(modul_ns, path="/modul")
 restx_api.add_namespace(materi_ns, path="/materi")
+restx_api.add_namespace(komentarmateri_ns, path="/komentar")

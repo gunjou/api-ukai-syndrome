@@ -34,6 +34,40 @@ def is_mentor_of_materi(id_mentor, id_materi):
             return result is not None
     except SQLAlchemyError:
         return False
+    
+def is_user_have_access_to_materi(id_user, id_materi, role):
+    engine = get_connection()
+    try:
+        with engine.connect() as conn:
+            query = """
+                SELECT 1
+                FROM materi m
+                JOIN modul mo ON m.id_modul = mo.id_modul
+                JOIN paketkelas pk ON mo.id_paketkelas = pk.id_paketkelas
+            """
+            if role == 'mentor':
+                query += """
+                    JOIN mentorkelas mk ON pk.id_paketkelas = mk.id_paketkelas
+                    WHERE mk.id_user = :id_user
+                """
+            elif role == 'peserta':
+                query += """
+                    JOIN pesertakelas ps ON pk.id_paketkelas = ps.id_paketkelas
+                    WHERE ps.id_user = :id_user
+                """
+            else:
+                return False
+
+            query += " AND m.id_materi = :id_materi AND m.status = 1"
+
+            result = conn.execute(text(query), {
+                "id_user": id_user,
+                "id_materi": id_materi
+            }).first()
+            return result is not None
+    except SQLAlchemyError as e:
+        print(f"Error: {e}")
+        return False
 
 
 """#=== CRUD ===#"""
