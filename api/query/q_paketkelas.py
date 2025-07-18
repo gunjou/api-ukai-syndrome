@@ -3,21 +3,39 @@ from sqlalchemy.exc import SQLAlchemyError
 from ..utils.config import get_connection, get_wita
 
 
-def get_all_kelas():
+def get_kelas_by_role(id_user, role):
     engine = get_connection()
     try:
         with engine.connect() as conn:
-            result = conn.execute(text("""
-                SELECT pk.id_paketkelas, pk.nama_kelas, pk.deskripsi,
-                       b.id_batch, b.nama_batch
-                FROM paketkelas pk
-                JOIN batch b ON pk.id_batch = b.id_batch
-                WHERE pk.status = 1
-                ORDER BY pk.id_paketkelas DESC
-            """)).mappings().fetchall()
+            if role == 'admin':
+                query = """
+                    SELECT pk.id_paketkelas, pk.nama_kelas, pk.deskripsi,
+                           b.id_batch, b.nama_batch
+                    FROM paketkelas pk
+                    JOIN batch b ON pk.id_batch = b.id_batch
+                    WHERE pk.status = 1
+                    ORDER BY pk.id_paketkelas DESC
+                """
+                result = conn.execute(text(query)).mappings().fetchall()
+
+            elif role == 'mentor':
+                query = """
+                    SELECT pk.id_paketkelas, pk.nama_kelas, pk.deskripsi,
+                           b.id_batch, b.nama_batch
+                    FROM mentorkelas mk
+                    JOIN paketkelas pk ON mk.id_paketkelas = pk.id_paketkelas
+                    JOIN batch b ON pk.id_batch = b.id_batch
+                    WHERE mk.id_user = :id_user AND mk.status = 1 AND pk.status = 1
+                    ORDER BY pk.id_paketkelas DESC
+                """
+                result = conn.execute(text(query), {"id_user": id_user}).mappings().fetchall()
+            else:
+                # Role tidak diizinkan
+                return []
+
             return [dict(row) for row in result]
     except SQLAlchemyError as e:
-        print(f"Error: {e}")
+        print(f"Database error: {e}")
         return []
 
 def get_kelas_by_id(id_kelas):

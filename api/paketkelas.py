@@ -1,4 +1,5 @@
 from flask import request
+from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
 from .query.q_paketkelas import *
@@ -14,11 +15,16 @@ kelas_model = kelas_ns.model("Kelas", {
 
 @kelas_ns.route('')
 class KelasListResource(Resource):
-    @role_required('admin')
+    @jwt_required()
+    @role_required(['admin', 'mentor'])
     def get(self):
-        """Akses: (admin), Ambil semua kelas aktif"""
+        """Akses: (admin, mentor), Ambil semua kelas aktif untuk admin, dan yang diampu oleh mentor"""
         try:
-            result = get_all_kelas()
+            current_user_id = get_jwt_identity()
+            role = get_jwt().get('role')
+
+            result = get_kelas_by_role(current_user_id, role)
+
             if not result:
                 return {"status": "error", "message": "Tidak ada kelas ditemukan"}, 404
             return {"data": result}, 200
