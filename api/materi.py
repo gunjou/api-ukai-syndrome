@@ -103,15 +103,30 @@ class MateriDetailResource(Resource):
             return {"status": "error", "message": str(e)}, 500
 
 """#== Endpoints lanjutan ==#"""
-@materi_ns.route('/user')
-class MateriUserResource(Resource):
+@materi_ns.route('/peserta')
+class MateriPesertaResource(Resource):
     @jwt_required()
-    @role_required("peserta")
+    @role_required('peserta')
     def get(self):
-        """Akses: (peserta) Melihat materi yang tersedia untuk user"""
+        """Akses: (peserta) Melihat materi yang tersedia untuk peserta"""
         id_user = get_jwt_identity()
         try:
-            result = get_materi_by_user(id_user)
+            result = get_materi_by_peserta(id_user)
+            if not result:
+                return {"status": "error", "data": [], "message": "Tidak ada materi yang tersedia"}, 200
+            return {"status": "success", "data": result}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+        
+@materi_ns.route('/mentor')
+class MateriMentorResource(Resource):
+    @jwt_required()
+    @role_required('mentor')
+    def get(self):
+        """Akses: (mentor) Melihat materi yang tersedia untuk mentor"""
+        id_user = get_jwt_identity()
+        try:
+            result = get_materi_by_mentor(id_user)
             if not result:
                 return {"status": "error", "data": [], "message": "Tidak ada materi yang tersedia"}, 200
             return {"status": "success", "data": result}, 200

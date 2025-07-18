@@ -151,12 +151,12 @@ def delete_materi(id_materi):
 
 
 """"#== Query lanjutan ==#"""
-def get_materi_by_user(id_user):
+def get_materi_by_peserta(id_user):
     engine = get_connection()
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, m.viewer_only, m.id_modul
+                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, m.viewer_only, m.id_modul, pk.id_paketkelas, pk.nama_kelas
                 FROM materi m
                 JOIN modul mo ON m.id_modul = mo.id_modul
                 JOIN paketkelas pk ON mo.id_paketkelas = pk.id_paketkelas
@@ -169,7 +169,26 @@ def get_materi_by_user(id_user):
             """), {"id_user": id_user}).mappings().fetchall()
             return [dict(row) for row in result]
     except SQLAlchemyError as e:
-        print(f"[get_materi_by_user] Error: {str(e)}")
+        print(f"[get_materi_by_peserta] Error: {str(e)}")
+        return []
+    
+def get_materi_by_mentor(id_user):
+    engine = get_connection()
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, m.viewer_only, m.id_modul, pk.id_paketkelas, pk.nama_kelas
+                FROM materi m
+                JOIN modul mo ON m.id_modul = mo.id_modul
+                JOIN paketkelas pk ON mo.id_paketkelas = pk.id_paketkelas
+                JOIN mentorkelas mkls ON mkls.id_user = :id_user
+                WHERE mkls.id_paketkelas = pk.id_paketkelas
+                  AND m.status = 1
+                ORDER BY mo.urutan_modul ASC
+            """), {"id_user": id_user}).mappings().fetchall()
+            return [dict(row) for row in result]
+    except SQLAlchemyError as e:
+        print(f"[get_materi_by_mentor] Error: {str(e)}")
         return []
     
 def update_materi_visibility(id_materi, visibility):
