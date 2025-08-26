@@ -16,18 +16,21 @@ def get_user_by_id(user_id):
         """), {"id_user": user_id}).mappings().fetchone()
         return dict(result) if result else None
 
-
 def get_login(payload):
     engine = get_connection()
     try:
         with engine.connect() as connection:
-            # Ambil data admin berdasarkan email
+            # Ambil data user + join ke kelas
             result = connection.execute(
                 text("""
-                    SELECT id_user, nama, email, password, role, status
-                    FROM users
-                    WHERE email = :email
-                    AND status = 1;
+                    SELECT u.id_user, u.nama, u.email, u.password, u.role, u.status,
+                           pk.nama_kelas
+                    FROM users u
+                    LEFT JOIN pesertakelas pkls ON u.id_user = pkls.id_user AND pkls.status = 1
+                    LEFT JOIN paketkelas pk ON pkls.id_paketkelas = pk.id_paketkelas AND pk.status = 1
+                    WHERE u.email = :email
+                    AND u.status = 1
+                    LIMIT 1;
                 """),
                 {"email": payload['email']}
             ).mappings().fetchone()
@@ -45,7 +48,8 @@ def get_login(payload):
                         'id_user': result['id_user'],
                         'nama': result['nama'],
                         'email': result['email'],
-                        'role': result['role']
+                        'role': result['role'],
+                        'nama_kelas': result['nama_kelas']  # Bisa NULL kalau belum ikut kelas
                     }
             return None
     except SQLAlchemyError as e:
