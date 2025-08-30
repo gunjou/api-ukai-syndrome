@@ -28,7 +28,7 @@ CORS(api)
 load_dotenv()
 
 api.config['JWT_SECRET_KEY'] = os.getenv("JWT_SECRET_KEY")
-api.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=12)  # waktu login sesi
+api.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=365)  # waktu login sesi
 api.config['JWT_BLACKLIST_ENABLED'] = True
 api.config['JWT_BLACKLIST_TOKEN_CHECKS'] = ['access', 'refresh']
 
@@ -53,7 +53,7 @@ restx_api = Api(
     version="1.0", 
     title="Ukai Syndrome", 
     description="Dokumentasi API Ukai Syndrome", 
-    doc="/documentation",
+    doc="/docs",
     authorizations=authorizations,
     security='Bearer Auth'
 )
