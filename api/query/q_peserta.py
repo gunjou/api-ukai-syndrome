@@ -10,7 +10,9 @@ def get_all_peserta():
             result = connection.execute(text("""
                 SELECT id_user, nama, email, password, kode_pemulihan, role
                 FROM users
-                WHERE role = 'peserta' AND status = 1;
+                WHERE role = 'peserta' 
+                  AND status = 1
+                  AND nama IS NOT NULL;
             """)).mappings().fetchall()
             return [dict(row) for row in result]
     except SQLAlchemyError as e:
