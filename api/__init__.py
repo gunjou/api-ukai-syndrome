@@ -5,9 +5,9 @@ from flask import Flask
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from flask_restx import Api
-from flask_mail import Mail
 
 from .utils.blacklist_store import is_blacklisted
+from .extensions import mail
 
 from .auth import auth_ns
 from .admin import admin_ns
@@ -43,7 +43,7 @@ api.config['MAIL_PASSWORD'] = os.getenv("MAIL_PASSWORD")
 api.config['MAIL_DEFAULT_SENDER'] = os.getenv("MAIL_DEFAULT_SENDER")
 
 jwt = JWTManager(api)
-mail = Mail(api)
+mail.init_app(api)
 
 @jwt.token_in_blocklist_loader
 def check_if_token_in_blacklist(jwt_header, jwt_payload):
