@@ -148,30 +148,100 @@ class LogoutKaryawanResource(Resource):
         return {"msg": "Missing JTI"}, 400
     
 
-@auth_ns.route('/register')
-class RegisterPesertaResource(Resource):
-    @auth_ns.expect(register_model)
+# @auth_ns.route('/register')
+# class RegisterPesertaResource(Resource):
+#     @auth_ns.expect(register_model)
+#     def post(self):
+#         """Register Peserta Baru (tanpa login)"""
+#         payload = request.get_json()
+
+#         try:
+#             # Validasi email format
+#             valid = validate_email(payload["email"], check_deliverability=False)
+#             payload["email"] = valid.email
+#         except EmailNotValidError as e:
+#             return {"status": "error", "message": str(e)}, 400
+
+#         # Generate kode pemulihan
+#         payload['kode_pemulihan'] = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+        
+#         # Hash password
+#         payload['password'] = generate_password_hash(payload['password'])
+
+#         try:
+#             success = register_peserta(payload)
+#             if not success:
+#                 return {"status": "error", "message": "Email sudah digunakan"}, 409
+#             return {"status": "success", "message": "Pendaftaran berhasil. Silakan login."}, 201
+#         except SQLAlchemyError as e:
+#             return {"status": "error", "message": "Server error"}, 500
+
+
+# auth.py
+@auth_ns.route('/register/email')
+class RegisterStep1Resource(Resource):
     def post(self):
-        """Register Peserta Baru (tanpa login)"""
+        """Step 1: Daftar dengan email (generate kode pemulihan)"""
         payload = request.get_json()
+        email = payload.get("email")
+
+        if not email:
+            return {"status": "error", "message": "Email wajib diisi"}, 400
 
         try:
-            # Validasi email format
-            valid = validate_email(payload["email"], check_deliverability=False)
-            payload["email"] = valid.email
+            valid = validate_email(email, check_deliverability=False)
+            email = valid.email
         except EmailNotValidError as e:
             return {"status": "error", "message": str(e)}, 400
 
-        # Generate kode pemulihan
-        payload['kode_pemulihan'] = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
-        
-        # Hash password
-        payload['password'] = generate_password_hash(payload['password'])
+        try:
+            success = register_step1(email)
+            if not success:
+                return {"status": "error", "message": "Email sudah terdaftar"}, 409
+            return {"status": "success", "message": "Kode pemulihan telah dibuat. Cek email Anda."}, 201
+        except SQLAlchemyError:
+            return {"status": "error", "message": "Server error"}, 500
+
+
+@auth_ns.route('/register/verify')
+class RegisterStep2Resource(Resource):
+    def post(self):
+        """Step 2: Verifikasi email + kode pemulihan"""
+        payload = request.get_json()
+        email = payload.get("email")
+        kode = payload.get("kode_pemulihan")
+
+        if not email or not kode:
+            return {"status": "error", "message": "Email dan kode pemulihan wajib diisi"}, 400
 
         try:
-            success = register_peserta(payload)
-            if not success:
-                return {"status": "error", "message": "Email sudah digunakan"}, 409
-            return {"status": "success", "message": "Pendaftaran berhasil. Silakan login."}, 201
-        except SQLAlchemyError as e:
+            verified = register_step2(email, kode)
+            if not verified:
+                return {"status": "error", "message": "Kode pemulihan salah atau email tidak ditemukan"}, 400
+            return {"status": "success", "message": "Verifikasi berhasil. Silakan lengkapi data."}, 200
+        except SQLAlchemyError:
+            return {"status": "error", "message": "Server error"}, 500
+
+
+@auth_ns.route('/register/complete')
+class RegisterStep3Resource(Resource):
+    def post(self):
+        """Step 3: Lengkapi data setelah verifikasi"""
+        payload = request.get_json()
+        email = payload.get("email")
+        nama = payload.get("nama")
+        no_hp = payload.get("no_hp")
+        password = payload.get("password")
+
+        if not email or not nama or not no_hp or not password:
+            return {"status": "error", "message": "Semua field wajib diisi"}, 400
+
+        hashed_password = generate_password_hash(password)
+
+        try:
+            updated = register_step3(email, nama, no_hp, hashed_password)
+            if not updated:
+                return {"status": "error", "message": "User tidak ditemukan atau belum verifikasi"}, 400
+            return {"status": "success", "message": "Registrasi selesai. Silakan login."}, 200
+        except SQLAlchemyError:
             return {"status": "error", "message": "Server error"}, 500

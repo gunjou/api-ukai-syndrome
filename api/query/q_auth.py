@@ -1,3 +1,5 @@
+from random import random
+import string
 import uuid
 from flask_jwt_extended import create_access_token
 from sqlalchemy import text
@@ -270,26 +272,115 @@ def get_login_mobile(payload):
         print(f"Error occurred: {str(e)}")
         return {'msg': 'Internal server error'}
     
-def register_peserta(payload):
+# def register_peserta(payload):
+#     engine = get_connection()
+#     try:
+#         with engine.begin() as connection:
+#             # Cek duplikat email
+#             existing = connection.execute(
+#                 text("SELECT 1 FROM users WHERE email = :email AND status = 1"),
+#                 {"email": payload["email"]}
+#             ).fetchone()
+#             if existing:
+#                 return False
+
+#             connection.execute(
+#                 text("""
+#                     INSERT INTO users (nama, email, password, kode_pemulihan, role, status, created_at, updated_at)
+#                     VALUES (:nama, :email, :password, :kode_pemulihan, 'peserta', 1, :created_at, :created_at)
+#                 """),
+#                 {**payload,"created_at": get_wita()}
+#             )
+#             return True
+#     except SQLAlchemyError as e:
+#         print(f"Register Error: {str(e)}")
+#         return None
+
+# query/q_auth.py
+def register_step1(email):
     engine = get_connection()
+    kode_pemulihan = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
     try:
         with engine.begin() as connection:
-            # Cek duplikat email
+            # cek apakah email sudah dipakai
             existing = connection.execute(
-                text("SELECT 1 FROM users WHERE email = :email AND status = 1"),
-                {"email": payload["email"]}
+                text("SELECT 1 FROM users WHERE email = :email"),
+                {"email": email}
             ).fetchone()
             if existing:
                 return False
 
             connection.execute(
                 text("""
-                    INSERT INTO users (nama, email, password, kode_pemulihan, role, status, created_at, updated_at)
-                    VALUES (:nama, :email, :password, :kode_pemulihan, 'peserta', 1, :created_at, :created_at)
+                    INSERT INTO users (email, kode_pemulihan, role, status, created_at, updated_at)
+                    VALUES (:email, :kode_pemulihan, 'peserta', 1, :created_at, :created_at)
                 """),
-                {**payload,"created_at": get_wita()}
+                {"email": email, "kode_pemulihan": kode_pemulihan, "created_at": get_wita()}
             )
             return True
     except SQLAlchemyError as e:
-        print(f"Register Error: {str(e)}")
+        print(f"Register Step 1 Error: {str(e)}")
+        return None
+
+def register_step2(email, kode_pemulihan):
+    engine = get_connection()
+    try:
+        with engine.begin() as connection:
+            user = connection.execute(
+                text("""
+                    SELECT id_user FROM users
+                    WHERE email = :email AND kode_pemulihan = :kode_pemulihan
+                """),
+                {"email": email, "kode_pemulihan": kode_pemulihan}
+            ).fetchone()
+
+            if not user:
+                return False
+
+            # opsional: update status jadi "verified" (misalnya status = 2)
+            connection.execute(
+                text("""
+                    UPDATE users
+                    SET updated_at = :updated_at
+                    WHERE id_user = :id_user
+                """),
+                {"id_user": user.id_user, "updated_at": get_wita()}
+            )
+            return True
+    except SQLAlchemyError as e:
+        print(f"Register Step 2 Error: {str(e)}")
+        return None
+
+def register_step3(email, nama, no_hp, hashed_password):
+    engine = get_connection()
+    try:
+        with engine.begin() as connection:
+            result = connection.execute(
+                text("SELECT id_user FROM users WHERE email = :email"),
+                {"email": email}
+            ).fetchone()
+
+            if not result:
+                return False
+
+            connection.execute(
+                text("""
+                    UPDATE users
+                    SET nama = :nama,
+                        no_hp = :no_hp,
+                        password = :password,
+                        updated_at = :updated_at
+                    WHERE id_user = :id_user
+                """),
+                {
+                    "id_user": result.id_user,
+                    "nama": nama,
+                    "no_hp": no_hp,
+                    "password": hashed_password,
+                    "updated_at": get_wita()
+                }
+            )
+            return True
+    except SQLAlchemyError as e:
+        print(f"Register Step 3 Error: {str(e)}")
         return None
