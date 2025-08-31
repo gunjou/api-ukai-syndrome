@@ -1,5 +1,5 @@
 from flask_mail import Message
-from . import mail
+from .. import mail
 
 def send_recovery_email(to_email, kode_pemulihan):
     try:
