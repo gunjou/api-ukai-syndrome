@@ -113,10 +113,25 @@ def get_login_web(payload):
 
             if result and result['password']:
                 if check_password_hash(result['password'], payload['password']):
-                    # Generate session baru
+                    # 🔑 Kalau role = admin / mentor → return sederhana
+                    if result['role'] in ["admin", "mentor"]:
+                        access_token = create_access_token(
+                            identity=str(result['id_user']),
+                            additional_claims={"role": result['role']}
+                        )
+                        return {
+                            'access_token': access_token,
+                            'message': 'login success',
+                            'id_user': result['id_user'],
+                            'nama': result['nama'],
+                            'email': result['email'],
+                            'role': result['role'],
+                            'nama_kelas': result['nama_kelas']  # Bisa NULL
+                        }
+
+                    # 🔑 Kalau role = peserta → pakai mekanisme session (seperti kode awalmu)
                     new_session_id = str(uuid.uuid4())
 
-                    # Buat JWT baru dengan session_id
                     access_token = create_access_token(
                         identity=str(result['id_user']),
                         additional_claims={
@@ -126,7 +141,7 @@ def get_login_web(payload):
                         }
                     )
 
-                    # Cek apakah ada session existing
+                    # Cek apakah sudah ada session lama
                     old_session = connection.execute(
                         text("""
                             SELECT id_session FROM sessions
@@ -137,7 +152,6 @@ def get_login_web(payload):
                     ).fetchone()
 
                     if old_session:
-                        # Update session lama jadi session baru
                         connection.execute(
                             text("""
                                 UPDATE sessions
@@ -154,7 +168,6 @@ def get_login_web(payload):
                             }
                         )
                     else:
-                        # Kalau belum ada → insert session baru
                         connection.execute(
                             text("""
                                 INSERT INTO sessions (id_user, device_type, session_id, jwt_token, status, created_at, updated_at)
