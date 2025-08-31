@@ -30,6 +30,24 @@ register_model = auth_ns.model("Register", {
     "password": fields.String(required=True)
 })
 
+# Step 1: hanya email
+register_email_model = auth_ns.model("RegisterEmail", {
+    "email": fields.String(required=True, description="Email peserta")
+})
+
+# Step 2: email + kode pemulihan
+register_verify_model = auth_ns.model("RegisterVerify", {
+    "email": fields.String(required=True, description="Email peserta"),
+    "kode_pemulihan": fields.String(required=True, description="Kode pemulihan 6 digit")
+})
+
+# Step 3: lengkapi data
+register_complete_model = auth_ns.model("RegisterComplete", {
+    "email": fields.String(required=True, description="Email peserta"),
+    "nama": fields.String(required=True, description="Nama lengkap"),
+    "no_hp": fields.String(required=True, description="Nomor HP"),
+    "password": fields.String(required=True, description="Password untuk login")
+})
 
 @auth_ns.route('/me')
 class MeResource(Resource):
@@ -180,13 +198,11 @@ class LogoutKaryawanResource(Resource):
 # auth.py
 @auth_ns.route('/register/email')
 class RegisterStep1Resource(Resource):
+    @auth_ns.expect(register_email_model, validate=True)
     def post(self):
         """Step 1: Daftar dengan email (generate kode pemulihan)"""
         payload = request.get_json()
         email = payload.get("email")
-
-        if not email:
-            return {"status": "error", "message": "Email wajib diisi"}, 400
 
         try:
             valid = validate_email(email, check_deliverability=False)
@@ -198,26 +214,24 @@ class RegisterStep1Resource(Resource):
             success = register_step1(email)
             if not success:
                 return {"status": "error", "message": "Email sudah terdaftar"}, 409
-            return {"status": "success", "message": "Kode pemulihan telah dibuat. Cek email Anda."}, 201
+            return {"status": "success", "message": "Kode pemulihan dibuat. Cek email Anda."}, 201
         except SQLAlchemyError:
             return {"status": "error", "message": "Server error"}, 500
 
 
 @auth_ns.route('/register/verify')
 class RegisterStep2Resource(Resource):
+    @auth_ns.expect(register_verify_model, validate=True)
     def post(self):
         """Step 2: Verifikasi email + kode pemulihan"""
         payload = request.get_json()
         email = payload.get("email")
         kode = payload.get("kode_pemulihan")
 
-        if not email or not kode:
-            return {"status": "error", "message": "Email dan kode pemulihan wajib diisi"}, 400
-
         try:
             verified = register_step2(email, kode)
             if not verified:
-                return {"status": "error", "message": "Kode pemulihan salah atau email tidak ditemukan"}, 400
+                return {"status": "error", "message": "Kode salah atau email tidak ditemukan"}, 400
             return {"status": "success", "message": "Verifikasi berhasil. Silakan lengkapi data."}, 200
         except SQLAlchemyError:
             return {"status": "error", "message": "Server error"}, 500
@@ -225,6 +239,7 @@ class RegisterStep2Resource(Resource):
 
 @auth_ns.route('/register/complete')
 class RegisterStep3Resource(Resource):
+    @auth_ns.expect(register_complete_model, validate=True)
     def post(self):
         """Step 3: Lengkapi data setelah verifikasi"""
         payload = request.get_json()
@@ -232,9 +247,6 @@ class RegisterStep3Resource(Resource):
         nama = payload.get("nama")
         no_hp = payload.get("no_hp")
         password = payload.get("password")
-
-        if not email or not nama or not no_hp or not password:
-            return {"status": "error", "message": "Semua field wajib diisi"}, 400
 
         hashed_password = generate_password_hash(password)
 
@@ -245,3 +257,4 @@ class RegisterStep3Resource(Resource):
             return {"status": "success", "message": "Registrasi selesai. Silakan login."}, 200
         except SQLAlchemyError:
             return {"status": "error", "message": "Server error"}, 500
+
