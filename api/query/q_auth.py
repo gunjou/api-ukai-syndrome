@@ -1,4 +1,4 @@
-from random import random
+import random
 import string
 import uuid
 from flask_jwt_extended import create_access_token
