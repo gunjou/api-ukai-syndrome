@@ -1,4 +1,5 @@
 from datetime import date, datetime
+import uuid
 
 
 def is_valid_date(date_str):
@@ -16,6 +17,16 @@ def serialize_row(row):
         key: value.strftime("%Y-%m-%d") if isinstance(value, (datetime, date)) else value
         for key, value in row.items()
     }
+
+def serialize_datetime_uuid(row):
+    def convert(v):
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        if isinstance(v, datetime):
+            return v.isoformat()
+        return v
+
+    return {k: convert(v) for k, v in dict(row).items()}
 
 def serialize_row_datetime(row):
     return {

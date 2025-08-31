@@ -7,7 +7,9 @@ from email_validator import validate_email, EmailNotValidError
 from werkzeug.security import generate_password_hash
 from sqlalchemy.exc import SQLAlchemyError
 
-from .query.q_auth import get_login, register_peserta, get_user_by_id
+from .utils.decorator import session_required
+
+from .query.q_auth import *
 from .utils.blacklist_store import blacklist
 
 
@@ -31,6 +33,7 @@ register_model = auth_ns.model("Register", {
 
 @auth_ns.route('/me')
 class MeResource(Resource):
+    @session_required
     @jwt_required()
     def get(self):
         """Ambil data user dari JWT token"""
@@ -46,6 +49,7 @@ class MeResource(Resource):
 
 @auth_ns.route('/protected')
 class ProtectedResource(Resource):
+    @session_required
     @jwt_required()
     def get(self):
         """Akses: (admin/mentor/peserta), Cek token masih valid"""
@@ -72,14 +76,15 @@ class LoginAdminResource(Resource):
             return {'status': "Internal server error"}, 500
         
 
-@auth_ns.route('/me')
+@auth_ns.route('/kelas-saya')
 class GetUserResource(Resource):
+    @session_required
     @jwt_required()
     def get(self):
         """Ambil data user yang sedang login berdasarkan id_user dari JWT"""
         try:
             id_user = get_jwt_identity()  # id_user disimpan saat login di access_token
-            user_data = get_user_by_id(id_user)
+            user_data = ambil_kelas_saya(id_user)
 
             if user_data is None:
                 return {'status': "User not found"}, 404
@@ -88,10 +93,51 @@ class GetUserResource(Resource):
             auth_ns.logger.error(f"Database error: {str(e)}")
             return {'status': "Internal server error"}, 500
         
+
+@auth_ns.route('/login/web')
+class LoginWebResource(Resource):
+    @auth_ns.expect(login_model)
+    def post(self):
+        """Login khusus untuk web (admin/mentor/peserta), email + password"""
+        payload = request.get_json()
+
+        if not payload.get('email') or not payload.get('password'):
+            return {'status': "Fields can't be blank"}, 400
+
+        try:
+            get_jwt_response = get_login_web(payload)
+            if get_jwt_response is None:
+                return {'status': "Invalid email or password"}, 401
+            return get_jwt_response, 200
+        except SQLAlchemyError as e:
+            auth_ns.logger.error(f"Database error: {str(e)}")
+            return {'status': "Internal server error"}, 500
+
+
+@auth_ns.route('/login/mobile')
+class LoginMobileResource(Resource):
+    @auth_ns.expect(login_model)
+    def post(self):
+        """Login khusus untuk mobile (admin/mentor/peserta), email + password"""
+        payload = request.get_json()
+
+        if not payload.get('email') or not payload.get('password'):
+            return {'status': "Fields can't be blank"}, 400
+
+        try:
+            get_jwt_response = get_login_mobile(payload)
+            if get_jwt_response is None:
+                return {'status': "Invalid email or password"}, 401
+            return get_jwt_response, 200
+        except SQLAlchemyError as e:
+            auth_ns.logger.error(f"Database error: {str(e)}")
+            return {'status': "Internal server error"}, 500
+
         
 @auth_ns.route('/logout')
 class LogoutKaryawanResource(Resource):
     @auth_ns.expect(logout_model)
+    @session_required
     @jwt_required()
     def post(self):
         """Akses: (admin/mentor/peserta), Logout karyawan dengan JTI blacklist"""

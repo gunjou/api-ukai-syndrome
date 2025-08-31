@@ -1,3 +1,4 @@
+import uuid
 from flask_jwt_extended import create_access_token
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -56,7 +57,7 @@ def get_login(payload):
         print(f"Error occurred: {str(e)}")
         return {'msg': 'Internal server error'}
     
-def get_user_by_id(id_user):
+def ambil_kelas_saya(id_user):
     engine = get_connection()
     try:
         with engine.connect() as connection:
@@ -85,6 +86,186 @@ def get_user_by_id(id_user):
                     'nama_kelas': result['nama_kelas']     # bisa NULL kalau belum ikut kelas
                 }
             return None
+    except SQLAlchemyError as e:
+        print(f"Error occurred: {str(e)}")
+        return {'msg': 'Internal server error'}
+    
+def get_login_web(payload):
+    engine = get_connection()
+    try:
+        with engine.begin() as connection:
+            # Ambil data user
+            result = connection.execute(
+                text("""
+                    SELECT u.id_user, u.nama, u.email, u.password, u.role, u.status,
+                           pk.nama_kelas
+                    FROM users u
+                    LEFT JOIN pesertakelas pkls ON u.id_user = pkls.id_user AND pkls.status = 1
+                    LEFT JOIN paketkelas pk ON pkls.id_paketkelas = pk.id_paketkelas AND pk.status = 1
+                    WHERE u.email = :email
+                    AND u.status = 1
+                    LIMIT 1;
+                """),
+                {"email": payload['email']}
+            ).mappings().fetchone()
+
+            if result and result['password']:
+                if check_password_hash(result['password'], payload['password']):
+                    # Generate session baru
+                    new_session_id = str(uuid.uuid4())
+
+                    # Buat JWT baru dengan session_id
+                    access_token = create_access_token(
+                        identity=str(result['id_user']),
+                        additional_claims={
+                            "role": result['role'],
+                            "session_id": new_session_id,
+                            "device_type": "web"
+                        }
+                    )
+
+                    # Cek apakah ada session existing
+                    old_session = connection.execute(
+                        text("""
+                            SELECT id_session FROM sessions
+                            WHERE id_user = :id_user AND device_type = 'web'
+                            LIMIT 1
+                        """),
+                        {"id_user": result['id_user']}
+                    ).fetchone()
+
+                    if old_session:
+                        # Update session lama jadi session baru
+                        connection.execute(
+                            text("""
+                                UPDATE sessions
+                                SET session_id = :session_id,
+                                    jwt_token = :jwt_token,
+                                    status = 1,
+                                    updated_at = NOW()
+                                WHERE id_session = :id_session
+                            """),
+                            {
+                                "session_id": new_session_id,
+                                "jwt_token": access_token,
+                                "id_session": old_session.id_session
+                            }
+                        )
+                    else:
+                        # Kalau belum ada → insert session baru
+                        connection.execute(
+                            text("""
+                                INSERT INTO sessions (id_user, device_type, session_id, jwt_token, status, created_at, updated_at)
+                                VALUES (:id_user, 'web', :session_id, :jwt_token, 1, NOW(), NOW())
+                            """),
+                            {
+                                "id_user": result['id_user'],
+                                "session_id": new_session_id,
+                                "jwt_token": access_token
+                            }
+                        )
+
+                    return {
+                        'access_token': access_token,
+                        'message': 'login success',
+                        'id_user': result['id_user'],
+                        'nama': result['nama'],
+                        'email': result['email'],
+                        'role': result['role'],
+                        'nama_kelas': result['nama_kelas']
+                    }
+
+        return None
+    except SQLAlchemyError as e:
+        print(f"Error occurred: {str(e)}")
+        return {'msg': 'Internal server error'}
+    
+def get_login_mobile(payload):
+    engine = get_connection()
+    try:
+        with engine.begin() as connection:
+            # Ambil data user
+            result = connection.execute(
+                text("""
+                    SELECT u.id_user, u.nama, u.email, u.password, u.role, u.status,
+                           pk.nama_kelas
+                    FROM users u
+                    LEFT JOIN pesertakelas pkls ON u.id_user = pkls.id_user AND pkls.status = 1
+                    LEFT JOIN paketkelas pk ON pkls.id_paketkelas = pk.id_paketkelas AND pk.status = 1
+                    WHERE u.email = :email
+                    AND u.status = 1
+                    LIMIT 1;
+                """),
+                {"email": payload['email']}
+            ).mappings().fetchone()
+
+            if result and result['password']:
+                if check_password_hash(result['password'], payload['password']):
+                    # Generate session baru
+                    new_session_id = str(uuid.uuid4())
+
+                    # Buat JWT baru dengan session_id
+                    access_token = create_access_token(
+                        identity=str(result['id_user']),
+                        additional_claims={
+                            "role": result['role'],
+                            "session_id": new_session_id,
+                            "device_type": "mobile"
+                        }
+                    )
+
+                    # Cek apakah ada session existing
+                    old_session = connection.execute(
+                        text("""
+                            SELECT id_session FROM sessions
+                            WHERE id_user = :id_user AND device_type = 'mobile'
+                            LIMIT 1
+                        """),
+                        {"id_user": result['id_user']}
+                    ).fetchone()
+
+                    if old_session:
+                        # Update session lama jadi session baru
+                        connection.execute(
+                            text("""
+                                UPDATE sessions
+                                SET session_id = :session_id,
+                                    jwt_token = :jwt_token,
+                                    status = 1,
+                                    updated_at = NOW()
+                                WHERE id_session = :id_session
+                            """),
+                            {
+                                "session_id": new_session_id,
+                                "jwt_token": access_token,
+                                "id_session": old_session.id_session
+                            }
+                        )
+                    else:
+                        # Kalau belum ada → insert session baru
+                        connection.execute(
+                            text("""
+                                INSERT INTO sessions (id_user, device_type, session_id, jwt_token, status, created_at, updated_at)
+                                VALUES (:id_user, 'mobile', :session_id, :jwt_token, 1, NOW(), NOW())
+                            """),
+                            {
+                                "id_user": result['id_user'],
+                                "session_id": new_session_id,
+                                "jwt_token": access_token
+                            }
+                        )
+
+                    return {
+                        'access_token': access_token,
+                        'message': 'login success',
+                        'id_user': result['id_user'],
+                        'nama': result['nama'],
+                        'email': result['email'],
+                        'role': result['role'],
+                        'nama_kelas': result['nama_kelas']
+                    }
+
+        return None
     except SQLAlchemyError as e:
         print(f"Error occurred: {str(e)}")
         return {'msg': 'Internal server error'}

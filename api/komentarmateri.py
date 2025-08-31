@@ -4,7 +4,7 @@ from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
 
-from .utils.decorator import role_required
+from .utils.decorator import role_required, session_required
 from .query.q_materi import is_user_have_access_to_materi
 from .query.q_komentarmateri import *
 
@@ -21,6 +21,7 @@ edit_komentar_model = komentarmateri_ns.model('EditKomentarInput', {
 
 @komentarmateri_ns.route('/<int:id_materi>/komentar')
 class KomentarMateriResource(Resource):
+    @session_required
     @jwt_required()
     @role_required(['mentor', 'peserta'])
     def get(self, id_materi):
@@ -35,6 +36,7 @@ class KomentarMateriResource(Resource):
         return {"status": "success", "total": len(komentar), "data": komentar}, 200
 
     @komentarmateri_ns.expect(komentar_post_parser)
+    @session_required
     @jwt_required()
     @role_required(['mentor', 'peserta'])
     def post(self, id_materi):
@@ -59,6 +61,7 @@ class KomentarMateriResource(Resource):
 
 @komentarmateri_ns.route('/<int:id_materi>/komentar/<int:id_komentarmateri>')
 class EditKomentarMateriResource(Resource):
+    @session_required
     @jwt_required()
     @role_required(['mentor', 'peserta'])
     @komentarmateri_ns.expect(edit_komentar_model)

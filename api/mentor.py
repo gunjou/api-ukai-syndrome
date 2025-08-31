@@ -6,7 +6,7 @@ from email_validator import validate_email, EmailNotValidError
 from sqlalchemy.exc import SQLAlchemyError
 
 from .query.q_mentor import *
-from .utils.decorator import role_required
+from .utils.decorator import role_required, session_required
 
 mentor_ns = Namespace("mentor", description="Mentor related endpoints")
 
@@ -18,6 +18,7 @@ mentor_model = mentor_ns.model("Mentor", {
 
 @mentor_ns.route('')
 class MentorListResource(Resource):
+    @session_required
     @role_required('admin')
     def get(self):
         """Akses: (admin), Mengambil list semua mentor"""
@@ -30,6 +31,7 @@ class MentorListResource(Resource):
             logging.error(f"Database error: {str(e)}")
             return {'status': "Internal server error"}, 500
 
+    @session_required
     @role_required('admin')
     @mentor_ns.expect(mentor_model)
     def post(self):
@@ -56,6 +58,7 @@ class MentorListResource(Resource):
 
 @mentor_ns.route('/<int:id_mentor>')
 class MentorDetailResource(Resource):
+    @session_required
     @role_required('admin')
     def get(self, id_mentor):
         """Akses: (admin), Mengambil data mentor berdasarkan ID"""
@@ -68,6 +71,7 @@ class MentorDetailResource(Resource):
             logging.error(f"Database error: {str(e)}")
             return {'status': "Internal server error"}, 500
 
+    @session_required
     @role_required('admin')
     @mentor_ns.expect(mentor_model, validate=False)
     def put(self, id_mentor):
@@ -96,6 +100,7 @@ class MentorDetailResource(Resource):
             logging.error(f"Database error: {str(e)}")
             return {'status': "Internal server error"}, 500
 
+    @session_required
     @role_required('admin')
     def delete(self, id_mentor):
         """Akses: (admin), Menghapus (nonaktifkan) mentor berdasarkan ID"""

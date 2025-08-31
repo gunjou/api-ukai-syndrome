@@ -2,7 +2,7 @@ from flask import request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
-from .utils.decorator import role_required
+from .utils.decorator import role_required, session_required
 from .query.q_modul import *
 
 modul_ns = Namespace("modul", description="Manajemen Modul dalam Paket Kelas")
@@ -20,6 +20,7 @@ visibility_model = modul_ns.model("ModulVisibility", {
 
 @modul_ns.route('')
 class ModulListResource(Resource):
+    @session_required
     @role_required(['admin', 'mentor'])
     def get(self):
         """Akses: (admin/mentor), Ambil semua modul"""
@@ -36,6 +37,7 @@ class ModulListResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required(['admin', 'mentor'])
     @modul_ns.expect(modul_model)
     def post(self):
@@ -70,6 +72,7 @@ class ModulListResource(Resource):
 
 @modul_ns.route('/<int:id_modul>')
 class ModulDetailResource(Resource):
+    @session_required
     @role_required(['admin', 'mentor'])
     def get(self, id_modul):
         """Akses: (admin/mentor), Ambil data modul berdasarkan ID"""
@@ -81,6 +84,7 @@ class ModulDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required(['admin', 'mentor'])
     @modul_ns.expect(modul_model, validate=False)
     def put(self, id_modul):
@@ -116,6 +120,7 @@ class ModulDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required(['admin', 'mentor'])
     def delete(self, id_modul):
         """Akses: (admin/mentor), Hapus modul (mentor hanya kelasnya sendiri)"""
@@ -142,6 +147,7 @@ class ModulDetailResource(Resource):
 @modul_ns.route('/user')
 class ModulByUserResource(Resource):
     # @jwt_required()
+    @session_required
     @role_required('peserta')
     def get(self):
         """Akses: (peserta), Melihat list modul dari kelas yang diikuti/diampu"""
@@ -157,6 +163,7 @@ class ModulByUserResource(Resource):
 
 @modul_ns.route('/<int:id_modul>/visibility')
 class ModulVisibilityResource(Resource):
+    @session_required
     @role_required(['admin', 'mentor'])
     @modul_ns.expect(visibility_model)
     def put(self, id_modul):

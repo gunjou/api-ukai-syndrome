@@ -6,7 +6,7 @@ from email_validator import validate_email, EmailNotValidError
 from sqlalchemy.exc import SQLAlchemyError
 
 from .query.q_peserta import *
-from .utils.decorator import role_required
+from .utils.decorator import role_required, session_required
 
 peserta_ns = Namespace("peserta", description="Peserta related endpoints")
 
@@ -18,6 +18,7 @@ peserta_model = peserta_ns.model("Peserta", {
 
 @peserta_ns.route('')
 class PesertaListResource(Resource):
+    @session_required
     @role_required('admin')
     def get(self):
         """Akses: (admin), Mengambil list semua peserta"""
@@ -30,6 +31,7 @@ class PesertaListResource(Resource):
             logging.error(f"Database error: {str(e)}")
             return {'status': "Internal server error"}, 500
 
+    @session_required
     @role_required('admin')
     @peserta_ns.expect(peserta_model)
     def post(self):
@@ -56,6 +58,7 @@ class PesertaListResource(Resource):
 
 @peserta_ns.route('/<int:id_peserta>')
 class PesertaDetailResource(Resource):
+    @session_required
     @role_required('admin')
     def get(self, id_peserta):
         """Akses: (admin), Mengambil data peserta berdasarkan ID"""
@@ -68,6 +71,7 @@ class PesertaDetailResource(Resource):
             logging.error(f"Database error: {str(e)}")
             return {'status': "Internal server error"}, 500
 
+    @session_required
     @role_required('admin')
     @peserta_ns.expect(peserta_model, validate=False)
     def put(self, id_peserta):
@@ -96,6 +100,7 @@ class PesertaDetailResource(Resource):
             logging.error(f"Database error: {str(e)}")
             return {'status': "Internal server error"}, 500
 
+    @session_required
     @role_required('admin')
     def delete(self, id_peserta):
         """Akses: (admin), Menghapus (nonaktifkan) peserta berdasarkan ID"""

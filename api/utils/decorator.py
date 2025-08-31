@@ -1,5 +1,8 @@
 from functools import wraps
-from flask_jwt_extended import verify_jwt_in_request, get_jwt
+from sqlalchemy import text
+from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request, get_jwt
+
+from .config import get_connection
 
 def role_required(expected_roles):
     def wrapper(fn):
@@ -19,4 +22,41 @@ def role_required(expected_roles):
 
             return fn(*args, **kwargs)
         return decorator
+    return wrapper
+
+def session_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        # Step 1: Verify JWT
+        verify_jwt_in_request()
+        claims = get_jwt()
+        user_id = get_jwt_identity()
+        session_id = claims.get("session_id")
+        device_type = claims.get("device_type")
+
+        # Step 2: Validasi ke DB
+        engine = get_connection()
+        with engine.connect() as connection:
+            result = connection.execute(
+                text("""
+                    SELECT id_session 
+                    FROM sessions 
+                    WHERE id_user = :user_id 
+                      AND session_id = :session_id 
+                      AND device_type = :device_type
+                      AND status = 1
+                    LIMIT 1
+                """),
+                {
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "device_type": device_type
+                }
+            ).fetchone()
+
+        if not result:
+            return {"message": "Session invalid or expired"}, 401
+
+        # Session valid → lanjut ke handler asli
+        return fn(*args, **kwargs)
     return wrapper

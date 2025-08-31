@@ -4,7 +4,7 @@ from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
 
 
-from .utils.decorator import role_required
+from .utils.decorator import role_required, session_required
 from .utils.helper import is_valid_date
 from .query.q_batch import get_batch_by_id
 from .query.q_userbatch import *
@@ -25,6 +25,7 @@ enroll_model = userbatch_ns.model("EnrollBatch", {
 @userbatch_ns.route('')
 class UserBatchListResource(Resource):
     @userbatch_ns.param('status_enroll', 'Filter status enroll (pending, approved, rejected)', required=False)
+    @session_required
     @role_required('admin')
     def get(self):
         """Akses: (admin), Ambil semua pendaftaran peserta ke batch (dengan filter status_enroll opsional)"""
@@ -38,6 +39,7 @@ class UserBatchListResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required('admin')
     @userbatch_ns.expect(userbatch_model)
     def post(self):
@@ -61,6 +63,7 @@ class UserBatchListResource(Resource):
 
 @userbatch_ns.route('/<int:id_userbatch>')
 class UserBatchDetailResource(Resource):
+    @session_required
     @role_required('admin')
     def get(self, id_userbatch):
         """Akses: (admin), Ambil data pendaftaran berdasarkan ID"""
@@ -72,6 +75,7 @@ class UserBatchDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required('admin')
     @userbatch_ns.expect(userbatch_model, validate=False)
     def put(self, id_userbatch):
@@ -100,6 +104,7 @@ class UserBatchDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required('admin')
     def delete(self, id_userbatch):
         """Akses: (admin), Nonaktifkan pendaftaran"""
@@ -115,6 +120,7 @@ class UserBatchDetailResource(Resource):
 """#=== Peserta ===#"""
 @userbatch_ns.route('/<int:id_batch>/peserta')
 class PesertaByBatchResource(Resource):
+    @session_required
     @role_required("admin")
     def get(self, id_batch):
         """Akses: (admin) Melihat semua peserta dalam 1 batch"""
@@ -130,6 +136,7 @@ class PesertaByBatchResource(Resource):
 
 @userbatch_ns.route('/enroll')
 class EnrollBatchResource(Resource):
+    @session_required
     @role_required('peserta')
     @userbatch_ns.expect(enroll_model)
     def post(self):

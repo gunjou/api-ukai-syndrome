@@ -2,7 +2,7 @@ from flask import request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
-from .utils.decorator import role_required
+from .utils.decorator import role_required, session_required
 from .query.q_materi import *
 
 materi_ns = Namespace("materi", description="Manajemen Materi Modul")
@@ -22,6 +22,7 @@ visibility_model = materi_ns.model("ModulVisibility", {
 
 @materi_ns.route('')
 class MateriListResource(Resource):
+    @session_required
     @role_required('admin')
     def get(self):
         """Akses: (admin), Ambil semua materi"""
@@ -33,6 +34,7 @@ class MateriListResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required('admin')
     @materi_ns.expect(materi_model)
     def post(self):
@@ -52,6 +54,7 @@ class MateriListResource(Resource):
 
 @materi_ns.route('/<int:id_materi>')
 class MateriDetailResource(Resource):
+    @session_required
     @role_required('admin')
     def get(self, id_materi):
         """Akses: (admin), Ambil detail materi"""
@@ -63,6 +66,7 @@ class MateriDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required('admin')
     @materi_ns.expect(materi_model, validate=False)
     def put(self, id_materi):
@@ -91,6 +95,7 @@ class MateriDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required('admin')
     def delete(self, id_materi):
         """Akses: (admin), Nonaktifkan materi"""
@@ -105,6 +110,7 @@ class MateriDetailResource(Resource):
 """#== Endpoints lanjutan ==#"""
 @materi_ns.route('/peserta')
 class MateriPesertaResource(Resource):
+    @session_required
     @jwt_required()
     @role_required('peserta')
     def get(self):
@@ -120,6 +126,7 @@ class MateriPesertaResource(Resource):
         
 @materi_ns.route('/mentor')
 class MateriMentorResource(Resource):
+    @session_required
     @jwt_required()
     @role_required('mentor')
     def get(self):
@@ -135,6 +142,7 @@ class MateriMentorResource(Resource):
         
 @materi_ns.route('/<int:id_materi>/visibility')
 class MateriVisibilityResource(Resource):
+    @session_required
     @role_required(['admin', 'mentor'])
     @materi_ns.expect(visibility_model)
     def put(self, id_materi):

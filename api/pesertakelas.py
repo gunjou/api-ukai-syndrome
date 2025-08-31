@@ -5,7 +5,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .query.q_paketkelas import get_kelas_by_id
 from .query.q_pesertakelas import *
-from .utils.decorator import role_required
+from .utils.decorator import role_required, session_required
 
 
 pesertakelas_ns = Namespace("pesertakelas", description="Relasi peserta dengan kelas")
@@ -17,6 +17,7 @@ pesertakelas_model = pesertakelas_ns.model("PesertaKelas", {
 
 @pesertakelas_ns.route('')
 class PesertaKelasListResource(Resource):
+    @session_required
     @role_required('admin')
     def get(self):
         """Akses: (admin), Mendapatkan semua data peserta-kelas"""
@@ -26,6 +27,7 @@ class PesertaKelasListResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required('admin')
     @pesertakelas_ns.expect(pesertakelas_model)
     def post(self):
@@ -42,6 +44,7 @@ class PesertaKelasListResource(Resource):
 
 @pesertakelas_ns.route('/<int:id_pesertakelas>')
 class PesertaKelasDetailResource(Resource):
+    @session_required
     @role_required('admin')
     def get(self, id_pesertakelas):
         """Akses: (admin), Mendapatkan detail peserta-kelas berdasarkan ID"""
@@ -53,6 +56,7 @@ class PesertaKelasDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required('admin')
     @pesertakelas_ns.expect(pesertakelas_model, validate=False)
     def put(self, id_pesertakelas):
@@ -66,6 +70,7 @@ class PesertaKelasDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required('admin')
     def delete(self, id_pesertakelas):
         """Akses: (admin), Nonaktifkan peserta-kelas"""
@@ -81,6 +86,7 @@ class PesertaKelasDetailResource(Resource):
 """#=== Peserta ===#"""
 @pesertakelas_ns.route("/<int:id_kelas>/peserta")
 class PesertaKelasResource(Resource):
+    @session_required
     @jwt_required()
     def get(self, id_kelas):
         """Akses: (admin, mentor, peserta), Ambil semua peserta dari suatu kelas"""

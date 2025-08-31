@@ -1,7 +1,7 @@
 from flask import request
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
-from .utils.decorator import role_required
+from .utils.decorator import role_required, session_required
 from .query.q_mentorkelas import *
 
 mentorkelas_ns = Namespace("mentorkelas", description="Manajemen penugasan mentor ke kelas")
@@ -13,6 +13,7 @@ mentorkelas_model = mentorkelas_ns.model("MentorKelas", {
 
 @mentorkelas_ns.route('')
 class MentorKelasListResource(Resource):
+    @session_required
     @role_required('admin')
     def get(self):
         """Akses: (admin), Ambil semua penugasan mentor"""
@@ -24,6 +25,7 @@ class MentorKelasListResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required('admin')
     @mentorkelas_ns.expect(mentorkelas_model)
     def post(self):
@@ -45,6 +47,7 @@ class MentorKelasListResource(Resource):
 
 @mentorkelas_ns.route('/<int:id_mentorkelas>')
 class MentorKelasDetailResource(Resource):
+    @session_required
     @role_required('admin')
     def get(self, id_mentorkelas):
         """Akses: (admin), Ambil detail penugasan mentor"""
@@ -56,6 +59,7 @@ class MentorKelasDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required('admin')
     @mentorkelas_ns.expect(mentorkelas_model, validate=False)
     def put(self, id_mentorkelas):
@@ -84,6 +88,7 @@ class MentorKelasDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+    @session_required
     @role_required('admin')
     def delete(self, id_mentorkelas):
         """Akses: (admin), Nonaktifkan penugasan mentor"""
