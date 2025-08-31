@@ -15,7 +15,7 @@ kelas_model = kelas_ns.model("Kelas", {
 
 @kelas_ns.route('')
 class KelasListResource(Resource):
-    @session_required
+    # @session_required
     @jwt_required()
     @role_required(['admin', 'mentor'])
     def get(self):
@@ -32,7 +32,7 @@ class KelasListResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
-    @session_required
+    # @session_required
     @role_required('admin')
     @kelas_ns.expect(kelas_model)
     def post(self):
@@ -54,7 +54,7 @@ class KelasListResource(Resource):
 
 @kelas_ns.route('/<int:id_kelas>')
 class KelasDetailResource(Resource):
-    @session_required
+    # @session_required
     @role_required('admin')
     def get(self, id_kelas):
         """Akses: (admin), Ambil detail kelas berdasarkan ID"""
@@ -66,7 +66,7 @@ class KelasDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
-    @session_required
+    # @session_required
     @role_required('admin')
     @kelas_ns.expect(kelas_model, validate=False)
     def put(self, id_kelas):
@@ -94,7 +94,7 @@ class KelasDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
-    @session_required
+    # @session_required
     @role_required('admin')
     def delete(self, id_kelas):
         """Akses: (admin), Hapus kelas (nonaktifkan)"""

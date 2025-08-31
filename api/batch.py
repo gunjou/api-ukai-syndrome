@@ -16,7 +16,7 @@ batch_model = batch_ns.model("Batch", {
 
 @batch_ns.route("")
 class BatchListResource(Resource):
-    @session_required
+    # @session_required
     @role_required('admin')
     def get(self):
         """Akses: (admin), Ambil semua batch aktif"""
@@ -28,7 +28,7 @@ class BatchListResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
-    @session_required
+    # @session_required
     @role_required('admin')
     @batch_ns.expect(batch_model)
     def post(self):
@@ -52,7 +52,7 @@ class BatchListResource(Resource):
 
 @batch_ns.route("/<int:id_batch>")
 class BatchDetailResource(Resource):
-    @session_required
+    # @session_required
     @role_required('admin')
     def get(self, id_batch):
         """Akses: (admin), Ambil detail batch berdasarkan ID"""
@@ -64,7 +64,7 @@ class BatchDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
-    @session_required
+    # @session_required
     @role_required('admin')
     @batch_ns.expect(batch_model, validate=False)
     def put(self, id_batch):
@@ -88,7 +88,7 @@ class BatchDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
-    @session_required
+    # @session_required
     @role_required('admin')
     def delete(self, id_batch):
         """Akses: (admin), Hapus (nonaktifkan) batch"""

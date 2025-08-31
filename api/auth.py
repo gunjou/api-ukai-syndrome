@@ -7,6 +7,7 @@ from email_validator import validate_email, EmailNotValidError
 from werkzeug.security import generate_password_hash
 from sqlalchemy.exc import SQLAlchemyError
 
+from .utils.mailer import send_recovery_email
 from .utils.decorator import session_required
 
 from .query.q_auth import *
@@ -211,9 +212,10 @@ class RegisterStep1Resource(Resource):
             return {"status": "error", "message": str(e)}, 400
 
         try:
-            success = register_step1(email)
+            success, kode_pemulihan = register_step1(email)
             if not success:
                 return {"status": "error", "message": "Email sudah terdaftar"}, 409
+            send_recovery_email(email, kode_pemulihan)
             return {"status": "success", "message": "Kode pemulihan dibuat. Cek email Anda."}, 201
         except SQLAlchemyError:
             return {"status": "error", "message": "Server error"}, 500

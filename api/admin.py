@@ -19,7 +19,7 @@ admin_model = admin_ns.model("Admin", {
 
 @admin_ns.route('')
 class AdminListResource(Resource):
-    @session_required
+    # @session_required
     @role_required('admin')
     def get(self):
         """Akses: (admin), Mengambil list semua admin"""
@@ -32,7 +32,7 @@ class AdminListResource(Resource):
             logging.error(f"Database error: {str(e)}")
             return {'status': "Internal server error"}, 500
     
-    @session_required
+    # @session_required
     @role_required('admin')
     @admin_ns.expect(admin_model)
     def post(self):
@@ -61,7 +61,7 @@ class AdminListResource(Resource):
 
 @admin_ns.route('/<int:id_admin>')
 class AdminDetailResource(Resource):
-    @session_required
+    # @session_required
     @role_required('admin')
     def get(self, id_admin):
         """Akses: (admin), Mengambil data admin berdasarkan ID"""
@@ -74,7 +74,7 @@ class AdminDetailResource(Resource):
             logging.error(f"Database error: {str(e)}")
             return {'status': "Internal server error"}, 500
 
-    @session_required
+    # @session_required
     @role_required('admin')
     @admin_ns.expect(admin_model, validate=False)
     def put(self, id_admin):
@@ -106,7 +106,7 @@ class AdminDetailResource(Resource):
             return {'status': "Internal server error"}, 500
 
 
-    @session_required
+    # @session_required
     @role_required('admin')
     def delete(self, id_admin):
         """Akses: (admin), Menghapus (nonaktifkan) admin berdasarkan ID"""

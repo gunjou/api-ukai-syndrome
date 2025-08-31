@@ -20,7 +20,7 @@ visibility_model = modul_ns.model("ModulVisibility", {
 
 @modul_ns.route('')
 class ModulListResource(Resource):
-    @session_required
+    # @session_required
     @role_required(['admin', 'mentor'])
     def get(self):
         """Akses: (admin/mentor), Ambil semua modul"""
@@ -37,7 +37,7 @@ class ModulListResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
-    @session_required
+    # @session_required
     @role_required(['admin', 'mentor'])
     @modul_ns.expect(modul_model)
     def post(self):
@@ -72,7 +72,7 @@ class ModulListResource(Resource):
 
 @modul_ns.route('/<int:id_modul>')
 class ModulDetailResource(Resource):
-    @session_required
+    # @session_required
     @role_required(['admin', 'mentor'])
     def get(self, id_modul):
         """Akses: (admin/mentor), Ambil data modul berdasarkan ID"""
@@ -84,7 +84,7 @@ class ModulDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
-    @session_required
+    # @session_required
     @role_required(['admin', 'mentor'])
     @modul_ns.expect(modul_model, validate=False)
     def put(self, id_modul):
@@ -120,7 +120,7 @@ class ModulDetailResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
-    @session_required
+    # @session_required
     @role_required(['admin', 'mentor'])
     def delete(self, id_modul):
         """Akses: (admin/mentor), Hapus modul (mentor hanya kelasnya sendiri)"""
@@ -163,7 +163,7 @@ class ModulByUserResource(Resource):
 
 @modul_ns.route('/<int:id_modul>/visibility')
 class ModulVisibilityResource(Resource):
-    @session_required
+    # @session_required
     @role_required(['admin', 'mentor'])
     @modul_ns.expect(visibility_model)
     def put(self, id_modul):

@@ -299,28 +299,29 @@ def get_login_mobile(payload):
 # query/q_auth.py
 def register_step1(email):
     engine = get_connection()
-    kode_pemulihan = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
     try:
         with engine.begin() as connection:
-            # cek apakah email sudah dipakai
             existing = connection.execute(
                 text("SELECT 1 FROM users WHERE email = :email"),
                 {"email": email}
             ).fetchone()
+
             if existing:
-                return False
+                return False, None
+
+            kode_pemulihan = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(6))
 
             connection.execute(
                 text("""
                     INSERT INTO users (email, kode_pemulihan, role, status, created_at, updated_at)
-                    VALUES (:email, :kode_pemulihan, 'peserta', 1, :created_at, :created_at)
+                    VALUES (:email, :kode_pemulihan, 'peserta', 1, NOW(), NOW())
                 """),
-                {"email": email, "kode_pemulihan": kode_pemulihan, "created_at": get_wita()}
+                {"email": email, "kode_pemulihan": kode_pemulihan}
             )
-            return True
-    except SQLAlchemyError as e:
-        print(f"Register Step 1 Error: {str(e)}")
-        return None
+            return True, kode_pemulihan
+    except Exception as e:
+        print(f"Register Step1 Error: {e}")
+        return None, None
 
 def register_step2(email, kode_pemulihan):
     engine = get_connection()

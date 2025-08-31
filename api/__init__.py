@@ -5,6 +5,7 @@ from flask import Flask
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from flask_restx import Api
+from flask_mail import Mail
 
 from .utils.blacklist_store import is_blacklisted
 
@@ -20,6 +21,8 @@ from .pesertakelas import pesertakelas_ns
 from .modul import modul_ns
 from .materi import materi_ns
 from .komentarmateri import komentarmateri_ns
+from .tryout import tryout_ns
+from .soaltryout import soaltryout_ns
 
 
 api = Flask(__name__)
@@ -27,12 +30,22 @@ CORS(api)
 
 load_dotenv()
 
+# JWT Configuration
 api.config['JWT_SECRET_KEY'] = os.getenv("JWT_SECRET_KEY")
 api.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=365)  # waktu login sesi
 api.config['JWT_BLACKLIST_ENABLED'] = True
 api.config['JWT_BLACKLIST_TOKEN_CHECKS'] = ['access', 'refresh']
 
+# Mail Configuration
+api.config['MAIL_SERVER'] = os.getenv("MAIL_SERVER")
+api.config['MAIL_PORT'] = int(os.getenv("MAIL_PORT"))
+api.config['MAIL_USE_SSL'] = os.getenv("MAIL_USE_SSL") == "True"
+api.config['MAIL_USERNAME'] = os.getenv("MAIL_USERNAME")
+api.config['MAIL_PASSWORD'] = os.getenv("MAIL_PASSWORD")
+api.config['MAIL_DEFAULT_SENDER'] = os.getenv("MAIL_DEFAULT_SENDER")
+
 jwt = JWTManager(api)
+mail = Mail(api)
 
 @jwt.token_in_blocklist_loader
 def check_if_token_in_blacklist(jwt_header, jwt_payload):
@@ -70,3 +83,5 @@ restx_api.add_namespace(pesertakelas_ns, path="/peserta-kelas")
 restx_api.add_namespace(modul_ns, path="/modul")
 restx_api.add_namespace(materi_ns, path="/materi")
 restx_api.add_namespace(komentarmateri_ns, path="/komentar")
+restx_api.add_namespace(tryout_ns, path="/tryout")
+restx_api.add_namespace(soaltryout_ns, path="/soal-tryout")
