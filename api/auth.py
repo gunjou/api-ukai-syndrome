@@ -71,6 +71,23 @@ class LoginAdminResource(Resource):
             auth_ns.logger.error(f"Database error: {str(e)}")
             return {'status': "Internal server error"}, 500
         
+
+@auth_ns.route('/me')
+class GetUserResource(Resource):
+    @jwt_required()
+    def get(self):
+        """Ambil data user yang sedang login berdasarkan id_user dari JWT"""
+        try:
+            id_user = get_jwt_identity()  # id_user disimpan saat login di access_token
+            user_data = get_user_by_id(id_user)
+
+            if user_data is None:
+                return {'status': "User not found"}, 404
+            return user_data, 200
+        except SQLAlchemyError as e:
+            auth_ns.logger.error(f"Database error: {str(e)}")
+            return {'status': "Internal server error"}, 500
+        
         
 @auth_ns.route('/logout')
 class LogoutKaryawanResource(Resource):
