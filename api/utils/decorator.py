@@ -31,32 +31,35 @@ def session_required(fn):
         verify_jwt_in_request()
         claims = get_jwt()
         user_id = get_jwt_identity()
-        session_id = claims.get("session_id")
-        device_type = claims.get("device_type")
+        role = claims.get("role")
 
-        # Step 2: Validasi ke DB
-        engine = get_connection()
-        with engine.connect() as connection:
-            result = connection.execute(
-                text("""
-                    SELECT id_session 
-                    FROM sessions 
-                    WHERE id_user = :user_id 
-                      AND session_id = :session_id 
-                      AND device_type = :device_type
-                      AND status = 1
-                    LIMIT 1
-                """),
-                {
-                    "user_id": user_id,
-                    "session_id": session_id,
-                    "device_type": device_type
-                }
-            ).fetchone()
+        # Step 2: Jika role peserta → validasi session
+        if role == "peserta":
+            session_id = claims.get("session_id")
+            device_type = claims.get("device_type")
 
-        if not result:
-            return {"message": "Session invalid or expired"}, 401
+            engine = get_connection()
+            with engine.connect() as connection:
+                result = connection.execute(
+                    text("""
+                        SELECT id_session 
+                        FROM sessions 
+                        WHERE id_user = :user_id 
+                          AND session_id = :session_id 
+                          AND device_type = :device_type
+                          AND status = 1
+                        LIMIT 1
+                    """),
+                    {
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "device_type": device_type
+                    }
+                ).fetchone()
 
-        # Session valid → lanjut ke handler asli
+            if not result:
+                return {"message": "Session invalid or expired"}, 401
+
+        # Kalau role bukan peserta → skip validasi session
         return fn(*args, **kwargs)
     return wrapper
