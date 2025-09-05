@@ -310,20 +310,46 @@ def get_login_mobile(payload):
 #         return None
 
 # query/q_auth.py
+import random
+from sqlalchemy import text
+
 def register_step1(email):
     engine = get_connection()
     try:
         with engine.begin() as connection:
-            existing = connection.execute(
-                text("SELECT 1 FROM users WHERE email = :email"),
+            # Cek apakah email sudah ada dengan nama terisi
+            existing_full = connection.execute(
+                text("SELECT 1 FROM users WHERE email = :email AND nama IS NOT NULL AND status = 1"),
                 {"email": email}
             ).fetchone()
 
-            if existing:
+            if existing_full:
+                # Sudah ada akun dengan nama → tidak boleh daftar ulang
                 return False, None
 
-            kode_pemulihan = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(6))
+            # Kode pemulihan hanya angka (6 digit)
+            kode_pemulihan = ''.join(random.choice("0123456789") for _ in range(6))
 
+            # Cek apakah email ada tapi nama masih NULL
+            existing_empty = connection.execute(
+                text("SELECT 1 FROM users WHERE email = :email AND nama IS NULL AND status = 1"),
+                {"email": email}
+            ).fetchone()
+
+            if existing_empty:
+                # Update kode pemulihan saja
+                connection.execute(
+                    text("""
+                        UPDATE users
+                        SET kode_pemulihan = :kode_pemulihan,
+                            updated_at = NOW()
+                        WHERE email = :email AND nama IS NULL AND status = 1
+                    """),
+                    {"email": email, "kode_pemulihan": kode_pemulihan}
+                )
+                return True, kode_pemulihan
+
+            # Kalau belum ada sama sekali → insert baru
             connection.execute(
                 text("""
                     INSERT INTO users (email, kode_pemulihan, role, status, created_at, updated_at)
@@ -332,6 +358,7 @@ def register_step1(email):
                 {"email": email, "kode_pemulihan": kode_pemulihan}
             )
             return True, kode_pemulihan
+
     except Exception as e:
         print(f"Register Step1 Error: {e}")
         return None, None
@@ -343,7 +370,7 @@ def register_step2(email, kode_pemulihan):
             user = connection.execute(
                 text("""
                     SELECT id_user FROM users
-                    WHERE email = :email AND kode_pemulihan = :kode_pemulihan
+                    WHERE email = :email AND kode_pemulihan = :kode_pemulihan AND status = 1
                 """),
                 {"email": email, "kode_pemulihan": kode_pemulihan}
             ).fetchone()
@@ -370,18 +397,21 @@ def register_step3(email, nama, no_hp, hashed_password):
     try:
         with engine.begin() as connection:
             result = connection.execute(
-                text("SELECT id_user FROM users WHERE email = :email"),
+                text("SELECT id_user FROM users WHERE email = :email AND status = 1"),
                 {"email": email}
             ).fetchone()
 
             if not result:
                 return False
+            
+            kode_pemulihan = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(6))
 
             connection.execute(
                 text("""
                     UPDATE users
                     SET nama = :nama,
                         no_hp = :no_hp,
+                        kode_pemulihan = :kode_pemulihan,
                         password = :password,
                         updated_at = :updated_at
                     WHERE id_user = :id_user
@@ -390,6 +420,7 @@ def register_step3(email, nama, no_hp, hashed_password):
                     "id_user": result.id_user,
                     "nama": nama,
                     "no_hp": no_hp,
+                    "kode_pemulihan": kode_pemulihan,
                     "password": hashed_password,
                     "updated_at": get_wita()
                 }
