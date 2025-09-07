@@ -10,11 +10,12 @@ def get_kelas_by_role(id_user, role):
             if role == 'admin':
                 query = """
                     SELECT pk.id_paketkelas, pk.nama_kelas, pk.deskripsi,
-                           b.id_batch, b.nama_batch
+                           b.id_batch, b.nama_batch, p.id_paket, p.nama_paket
                     FROM paketkelas pk
-                    JOIN batch b ON pk.id_batch = b.id_batch
+                    JOIN batch b ON pk.id_batch = b.id_batch and b.status = 1
+                    JOIN paket p ON pk.id_paket = p.id_paket and p.status = 1
                     WHERE pk.status = 1
-                    ORDER BY pk.id_paketkelas DESC
+                    ORDER BY pk.nama_kelas ASC
                 """
                 result = conn.execute(text(query)).mappings().fetchall()
 
@@ -26,7 +27,7 @@ def get_kelas_by_role(id_user, role):
                     JOIN paketkelas pk ON mk.id_paketkelas = pk.id_paketkelas
                     JOIN batch b ON pk.id_batch = b.id_batch
                     WHERE mk.id_user = :id_user AND mk.status = 1 AND pk.status = 1
-                    ORDER BY pk.id_paketkelas DESC
+                    ORDER BY pk.nama_kelas ASC
                 """
                 result = conn.execute(text(query), {"id_user": id_user}).mappings().fetchall()
             else:
@@ -70,6 +71,10 @@ def is_batch_exist(id_batch):
 def insert_kelas(payload):
     engine = get_connection()
     try:
+        # Normalisasi nama_kelas → hilangkan spasi depan/belakang
+        if "nama_kelas" in payload and isinstance(payload["nama_kelas"], str):
+            payload["nama_kelas"] = payload["nama_kelas"].strip()
+
         with engine.begin() as conn:
             result = conn.execute(text("""
                 INSERT INTO paketkelas (id_batch, nama_kelas, deskripsi, status, created_at, updated_at)

@@ -1,4 +1,5 @@
 from datetime import date, datetime
+import os
 import uuid
 
 
@@ -33,3 +34,9 @@ def serialize_row_datetime(row):
         key: value.isoformat() if isinstance(value, (datetime, date)) else value
         for key, value in row.items()
     }
+
+def get_project_root():
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+
+def get_sample_file(filename):
+    return os.path.join(get_project_root(), "template_files", filename)

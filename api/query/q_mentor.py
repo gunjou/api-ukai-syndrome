@@ -8,10 +8,22 @@ def get_all_mentor():
     try:
         with engine.connect() as connection:
             result = connection.execute(text("""
-                SELECT id_user, nama, email, password, kode_pemulihan, role
-                FROM users
-                WHERE role = 'mentor' AND status = 1;
+                SELECT 
+                    u.id_user, u.nama, u.email, u.kode_pemulihan, u.password, u.no_hp, u.role,
+                    pk.id_paketkelas, pk.nama_kelas, p.id_paket, p.nama_paket, pk.deskripsi, b.id_batch, b.nama_batch
+                FROM users u
+                LEFT JOIN mentorkelas mk 
+                    ON u.id_user = mk.id_user AND mk.status = 1
+                LEFT JOIN paketkelas pk 
+                    ON mk.id_paketkelas = pk.id_paketkelas AND pk.status = 1
+                LEFT JOIN paket p 
+                    ON p.id_paket = pk.id_paket AND p.status = 1
+                LEFT JOIN batch b 
+                    ON b.id_batch = pk.id_batch AND b.status = 1
+                WHERE u.role = 'mentor' AND u.status = 1
+                ORDER BY u.nama ASC;
             """)).mappings().fetchall()
+
             return [dict(row) for row in result]
     except SQLAlchemyError as e:
         print(f"Error occurred: {str(e)}")
@@ -19,17 +31,73 @@ def get_all_mentor():
 
 def insert_mentor(payload):
     engine = get_connection()
+    now = get_wita()
     try:
         with engine.begin() as connection:
-            payload['hash_password'] = generate_password_hash(payload['password'], method='pbkdf2:sha256')
-            result = connection.execute(text("""
-                INSERT INTO users (nama, email, password, kode_pemulihan, role, status, created_at, updated_at)
-                VALUES (:nama, :email, :hash_password, :kode_pemulihan, 'mentor', 1, :timestamp_wita, :timestamp_wita)
-                RETURNING nama
-            """), {**payload, "timestamp_wita": get_wita()}).mappings().fetchone()
-            return dict(result)
+            email = payload.get("email").strip().lower()
+
+            # 🔍 Cek apakah email sudah terdaftar untuk mentor aktif
+            check = connection.execute(text("""
+                SELECT id_user, nama FROM users 
+                WHERE lower(email) = :email 
+                  AND role = 'mentor' 
+                  AND status = 1
+            """), {"email": email}).mappings().fetchone()
+
+            if check:
+                return {
+                    "error": True,
+                    "message": f"Email {email} sudah terdaftar untuk mentor aktif",
+                    "data": {"nama": check["nama"], "email": email}
+                }
+
+            # Hash password
+            payload['hash_password'] = generate_password_hash(
+                payload['password'], method='pbkdf2:sha256'
+            )
+
+            # Normalisasi no_hp
+            no_hp = payload.get("no_hp")
+            if not no_hp or str(no_hp).strip() == "":
+                no_hp = None
+
+            # Insert ke users
+            user_result = connection.execute(text("""
+                INSERT INTO users (nama, email, password, kode_pemulihan, role, status, created_at, updated_at, no_hp)
+                VALUES (:nama, :email, :hash_password, :kode_pemulihan, 'mentor', 1, :now, :now, :no_hp)
+                RETURNING id_user, nama, email
+            """), {
+                **payload,
+                "email": email,
+                "now": now,
+                "no_hp": no_hp
+            }).mappings().fetchone()
+
+            if not user_result:
+                return None
+
+            id_user = user_result["id_user"]
+
+            # Insert ke mentorkelas (opsional)
+            if payload.get("id_paketkelas"):
+                connection.execute(text("""
+                    INSERT INTO mentorkelas (id_user, id_paketkelas, status, created_at, updated_at)
+                    VALUES (:id_user, :id_paketkelas, 1, :now, :now)
+                """), {
+                    "id_user": id_user,
+                    "id_paketkelas": payload["id_paketkelas"],
+                    "now": now
+                })
+
+            return {
+                "id_user": id_user,
+                "nama": user_result["nama"],
+                "email": user_result["email"],
+                "id_paketkelas": payload.get("id_paketkelas")  # bisa None
+            }
+
     except SQLAlchemyError as e:
-        print(f"Error occurred: {str(e)}")
+        print(f"[ERROR insert_mentor] {e}")
         return None
 
 def get_mentor_by_id(id_mentor):
@@ -48,54 +116,120 @@ def get_mentor_by_id(id_mentor):
 
 def update_mentor(id_mentor, payload):
     engine = get_connection()
+    now = get_wita()
+
     try:
         with engine.begin() as connection:
+            # --- Update data di users ---
             fields_to_update = {
                 "nama": payload["nama"],
                 "email": payload["email"],
+                "no_hp": payload.get("no_hp") if payload.get("no_hp") != "" else None,
                 "kode_pemulihan": payload["kode_pemulihan"],
-                "updated_at": get_wita()
+                "updated_at": now
             }
 
-            if payload["password"]:
+            if payload.get("password"):
                 fields_to_update["password"] = generate_password_hash(payload["password"], method='pbkdf2:sha256')
-                query = text("""
+                query_user = text("""
                     UPDATE users
-                    SET nama = :nama, email = :email, password = :password,
-                        kode_pemulihan = :kode_pemulihan, updated_at = :updated_at
+                    SET nama = :nama, email = :email, no_hp = :no_hp,
+                        password = :password, kode_pemulihan = :kode_pemulihan, 
+                        updated_at = :updated_at
                     WHERE id_user = :id_mentor AND role = 'mentor' AND status = 1
-                    RETURNING nama
+                    RETURNING id_user, nama;
                 """)
             else:
-                query = text("""
+                query_user = text("""
                     UPDATE users
-                    SET nama = :nama, email = :email,
+                    SET nama = :nama, email = :email, no_hp = :no_hp,
                         kode_pemulihan = :kode_pemulihan, updated_at = :updated_at
                     WHERE id_user = :id_mentor AND role = 'mentor' AND status = 1
-                    RETURNING nama
+                    RETURNING id_user, nama;
                 """)
 
-            result = connection.execute(query, {**fields_to_update, "id_mentor": id_mentor}).mappings().fetchone()
-            return dict(result) if result else None
+            user_result = connection.execute(query_user, {**fields_to_update, "id_mentor": id_mentor}).mappings().fetchone()
+            if not user_result:
+                return None
+
+            # --- Handle data mentorkelas ---
+            new_paketkelas = payload.get("id_paketkelas")
+
+            # Cek apakah mentor sudah punya kelas aktif
+            old_class = connection.execute(text("""
+                SELECT id_mentorkelas, id_paketkelas
+                FROM mentorkelas
+                WHERE id_user = :id_mentor AND status = 1
+                LIMIT 1;
+            """), {"id_mentor": id_mentor}).mappings().fetchone()
+
+            if not old_class and new_paketkelas:  
+                # Case 1: belum ada kelas → insert baru
+                connection.execute(text("""
+                    INSERT INTO mentorkelas (id_user, id_paketkelas, status, created_at, updated_at)
+                    VALUES (:id_mentor, :id_paketkelas, 1, :now, :now);
+                """), {"id_mentor": id_mentor, "id_paketkelas": new_paketkelas, "now": now})
+
+            elif old_class and new_paketkelas and old_class["id_paketkelas"] != new_paketkelas:  
+                # Case 2: sudah ada kelas → update ke kelas baru
+                connection.execute(text("""
+                    UPDATE mentorkelas
+                    SET id_paketkelas = :id_paketkelas, updated_at = :now
+                    WHERE id_mentorkelas = :id_mentorkelas;
+                """), {"id_paketkelas": new_paketkelas, "now": now, "id_mentorkelas": old_class["id_mentorkelas"]})
+
+            elif old_class and not new_paketkelas:  
+                # Case 3: awalnya ada kelas → hapus (nonaktifkan)
+                connection.execute(text("""
+                    UPDATE mentorkelas
+                    SET status = 0, updated_at = :now
+                    WHERE id_mentorkelas = :id_mentorkelas;
+                """), {"id_mentorkelas": old_class["id_mentorkelas"], "now": now})
+
+            # kalau sama2 null atau sama2 sama → tidak ada perubahan
+
+            return dict(user_result)
+
     except SQLAlchemyError as e:
-        print(f"Error: {e}")
+        print(f"Error update_mentor: {e}")
         return None
 
 def delete_mentor(id_mentor):
     engine = get_connection()
+    now = get_wita()
     try:
         with engine.begin() as connection:
+            # Nonaktifkan mentor di tabel users
             result = connection.execute(text("""
                 UPDATE users
                 SET status = 0,
-                    updated_at = :timestamp_wita
-                WHERE id_user = :id_mentor AND role = 'mentor' AND status = 1
-                RETURNING nama;
+                    updated_at = :now
+                WHERE id_user = :id_mentor 
+                  AND role = 'mentor' 
+                  AND status = 1
+                RETURNING id_user, nama;
             """), {
                 "id_mentor": id_mentor,
-                "timestamp_wita": get_wita()
+                "now": now
             }).mappings().fetchone()
-            return dict(result) if result else None
+
+            if not result:
+                return None  # mentor tidak ditemukan atau sudah nonaktif
+
+            # Nonaktifkan juga semua data di mentorkelas
+            connection.execute(text("""
+                UPDATE mentorkelas
+                SET status = 0,
+                    updated_at = :now
+                WHERE id_user = :id_mentor
+                  AND status = 1
+            """), {
+                "id_mentor": id_mentor,
+                "now": now
+            })
+
+            return dict(result)
     except SQLAlchemyError as e:
-        print(f"Error: {e}")
+        print(f"Error delete_mentor: {e}")
         return None
+

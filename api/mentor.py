@@ -11,17 +11,18 @@ from .utils.decorator import role_required, session_required
 mentor_ns = Namespace("mentor", description="Mentor related endpoints")
 
 mentor_model = mentor_ns.model("Mentor", {
-    "nama": fields.String(required=True, description="nama mentor"),
-    "email": fields.String(required=True, description="email mentor"),
-    "password": fields.String(required=True, description="password mentor")
+    "nama": fields.String(required=True, description="Nama mentor"),
+    "email": fields.String(required=True, description="Email mentor"),
+    "password": fields.String(required=True, description="Password mentor"),
+    "no_hp": fields.String(required=False, description="Nomor HP mentor"),
+    "id_paketkelas": fields.Integer(required=False, description="ID kelas yang diampu (opsional)")
 })
 
 @mentor_ns.route('')
 class MentorListResource(Resource):
-    # @session_required
     @role_required('admin')
     def get(self):
-        """Akses: (admin), Mengambil list semua mentor"""
+        """Akses: (admin), Mengambil list semua mentor + kelas"""
         try:
             result = get_all_mentor()
             if not result:
@@ -50,11 +51,25 @@ class MentorListResource(Resource):
             new_mentor = insert_mentor(payload)
             if not new_mentor:
                 return {"status": "Gagal menambahkan mentor"}, 400
-            return {"data": new_mentor, "status": f"Mentor {new_mentor['nama']} berhasil ditambahkan"}, 201
+
+            # 🔍 Handle error dari insert_mentor
+            if new_mentor.get("error"):
+                return {
+                    "status": "error",
+                    "message": new_mentor["message"],
+                    "data": new_mentor["data"]
+                }, 400
+
+            if new_mentor.get("id_paketkelas"):
+                msg = f"Mentor {new_mentor['nama']} berhasil ditambahkan ke kelas {new_mentor['id_paketkelas']}"
+            else:
+                msg = f"Mentor {new_mentor['nama']} berhasil ditambahkan (belum ada kelas)"
+
+            return {"data": new_mentor, "status": msg}, 201
         except SQLAlchemyError as e:
             logging.error(f"Database error: {str(e)}")
             return {'status': "Internal server error"}, 500
-
+    
 
 @mentor_ns.route('/<int:id_mentor>')
 class MentorDetailResource(Resource):
@@ -75,7 +90,6 @@ class MentorDetailResource(Resource):
     @role_required('admin')
     @mentor_ns.expect(mentor_model, validate=False)
     def put(self, id_mentor):
-        """Akses: (admin), Edit data mentor berdasarkan ID"""
         data = request.get_json()
         if not data:
             return {"status": "error", "message": "Payload tidak boleh kosong"}, 400
@@ -88,6 +102,8 @@ class MentorDetailResource(Resource):
             "nama": data.get("nama", old_mentor["nama"]),
             "email": data.get("email", old_mentor["email"]),
             "password": data.get("password", ""),
+            "no_hp": data.get("no_hp", old_mentor.get("no_hp")),
+            "id_paketkelas": data.get("id_paketkelas"),  # opsional
             "kode_pemulihan": data.get("kode_pemulihan", old_mentor["kode_pemulihan"])
         }
 
@@ -99,6 +115,7 @@ class MentorDetailResource(Resource):
         except SQLAlchemyError as e:
             logging.error(f"Database error: {str(e)}")
             return {'status': "Internal server error"}, 500
+
 
     # @session_required
     @role_required('admin')
