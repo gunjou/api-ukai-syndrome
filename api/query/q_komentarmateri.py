@@ -17,31 +17,37 @@ def is_valid_parent_komentar(id_materi, parent_id):
 
 
 """#=== basic CRUD ===#"""
-def get_komentar_by_materi(id_materi):
+# query/q_komentarmateri.py
+def get_komentar_by_materi(id_materi, id_paketkelas):
     engine = get_connection()
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT km.id_komentarmateri, km.id_user, u.nama, km.isi_komentar, km.parent_id, km.is_deleted, km.deleted_by_mentor,
+                SELECT km.id_komentarmateri, km.id_user, u.nama, km.isi_komentar, 
+                       km.parent_id, km.is_deleted, km.deleted_by_mentor,
                        km.created_at, km.updated_at
                 FROM komentarmateri km
                 JOIN users u ON km.id_user = u.id_user
-                WHERE km.id_materi = :id_materi AND km.status = 1
+                WHERE km.id_materi = :id_materi 
+                  AND km.id_paketkelas = :id_paketkelas
+                  AND km.status = 1
                 ORDER BY km.created_at ASC
-            """), {"id_materi": id_materi})
+            """), {"id_materi": id_materi, "id_paketkelas": id_paketkelas})
             komentar = [serialize_row_datetime(row) for row in result.mappings().fetchall()]
             return komentar
     except SQLAlchemyError as e:
         print(f"Error: {e}")
         return []
 
-def insert_komentar_materi(id_materi, id_user, isi_komentar, parent_id=None):
+def insert_komentar_materi(id_materi, id_user, isi_komentar, id_paketkelas, parent_id=None):
     engine = get_connection()
     try:
         with engine.begin() as conn:
             query = text("""
-                INSERT INTO komentarmateri (id_materi, id_user, isi_komentar, parent_id, status, created_at, updated_at)
-                VALUES (:id_materi, :id_user, :isi_komentar, :parent_id, 1, :created_at, :updated_at)
+                INSERT INTO komentarmateri (id_materi, id_user, isi_komentar, parent_id, 
+                                            id_paketkelas, status, created_at, updated_at)
+                VALUES (:id_materi, :id_user, :isi_komentar, :parent_id, 
+                        :id_paketkelas, 1, :created_at, :updated_at)
                 RETURNING id_komentarmateri
             """)
             now = get_wita()
@@ -50,6 +56,7 @@ def insert_komentar_materi(id_materi, id_user, isi_komentar, parent_id=None):
                 "id_user": id_user,
                 "isi_komentar": isi_komentar,
                 "parent_id": parent_id,
+                "id_paketkelas": id_paketkelas,
                 "created_at": now,
                 "updated_at": now
             }).mappings().fetchone()
@@ -62,7 +69,7 @@ def get_komentar_by_id(id_komentarmateri):
     engine = get_connection()
     with engine.connect() as conn:
         query = text("""
-            SELECT id_komentarmateri, id_user, updated_at 
+            SELECT id_komentarmateri, id_user, id_materi, id_paketkelas, updated_at 
             FROM komentarmateri 
             WHERE id_komentarmateri = :id AND status = 1
         """)

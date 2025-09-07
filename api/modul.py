@@ -14,6 +14,13 @@ modul_model = modul_ns.model("Modul", {
     "urutan_modul": fields.Integer(required=True, description="Urutan Modul")
 })
 
+mentor_modul_model = modul_ns.model("MentorModul", {
+    "judul": fields.String(required=True, description="Judul Modul"),
+    "deskripsi": fields.String(required=False, description="Deskripsi Modul"),
+    "visibility": fields.String(required=False, description="Nilai visibility (open/hold/close)")
+})
+
+
 visibility_model = modul_ns.model("ModulVisibility", {
     "visibility": fields.String(required=True, description="Nilai visibility (open/hold/close)")
 })
@@ -31,11 +38,13 @@ class ModulListResource(Resource):
                 result = get_all_modul_admin()
             else:
                 result = get_all_modul_by_mentor(id_user)
+
             if not result:
                 return {"status": "error", "message": "Tidak ada modul ditemukan"}, 404
             return {"data": result}, 200
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
+
 
     # @session_required
     @role_required(['admin', 'mentor'])
@@ -69,6 +78,34 @@ class ModulListResource(Resource):
             return {"status": f"Modul '{result['judul']}' berhasil ditambahkan", "data": result}, 201
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
+        
+
+@modul_ns.route('/mentor')
+class MentorModulResource(Resource):
+    @role_required(['mentor'])
+    @modul_ns.expect(mentor_modul_model)
+    def post(self):
+        """Akses: mentor, Tambah modul (otomatis assign ke semua kelas yang diampu)"""
+        data = request.get_json()
+        id_user = get_jwt_identity()
+
+        payload = {
+            "judul": data['judul'],
+            "deskripsi": data.get('deskripsi'),
+            "visibility": data.get("visibility", "hold")
+        }
+
+        try:
+            result = insert_modul_for_mentor(payload, id_user)
+            if not result:
+                return {"status": "error", "message": "Gagal menambahkan modul"}, 400
+            return {
+                "status": f"Modul '{result['judul']}' berhasil ditambahkan dan di-assign ke semua kelas mentor",
+                "data": result
+            }, 201
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+
 
 @modul_ns.route('/<int:id_modul>')
 class ModulDetailResource(Resource):
@@ -80,6 +117,7 @@ class ModulDetailResource(Resource):
             modul = get_modul_by_id(id_modul)
             if not modul:
                 return {"status": "error", "message": "Modul tidak ditemukan"}, 404
+
             return {"data": modul}, 200
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
@@ -146,16 +184,15 @@ class ModulDetailResource(Resource):
 """#=== Endpoint tambahan ===#"""
 @modul_ns.route('/user')
 class ModulByUserResource(Resource):
-    # @jwt_required()
     @session_required
-    @role_required('peserta')
+    @role_required(['mentor', 'peserta'])
     def get(self):
-        """Akses: (peserta), Melihat list modul dari kelas yang diikuti/diampu"""
+        """Akses: (mentor/peserta), Melihat list modul dari kelas yang diampu/diikuti"""
         id_user = get_jwt_identity()
         role = get_jwt().get("role")
 
         try:
-            result = get_modul_by_user(id_user, role)
+            result = get_all_modul_by_user(id_user, role)
             return {"status": "success", "data": result}, 200
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500

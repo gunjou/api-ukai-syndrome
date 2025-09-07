@@ -140,6 +140,25 @@ class MateriMentorResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
         
+    @role_required('mentor')
+    @materi_ns.expect(materi_model)
+    def post(self):
+        """Akses: (mentor), Tambah materi ke modul yang diampu"""
+        payload = request.get_json()
+        id_user = get_jwt_identity()
+
+        # 🔎 Validasi: apakah modul ini milik kelas yang diampu mentor?
+        if not is_mentor_of_modul(id_user, payload["id_modul"]):
+            return {"status": "error", "message": "Akses ditolak. Modul bukan milik kelas yang Anda ampu."}, 403
+
+        try:
+            created = insert_materi(payload)
+            if not created:
+                return {"status": "error", "message": "Gagal menambahkan materi"}, 400
+            return {"status": f"Materi '{created['judul']}' berhasil ditambahkan", "data": created}, 201
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+        
 @materi_ns.route('/<int:id_materi>/visibility')
 class MateriVisibilityResource(Resource):
     # @session_required

@@ -26,7 +26,7 @@ def get_login(payload):
             # Ambil data user + join ke kelas
             result = connection.execute(
                 text("""
-                    SELECT u.id_user, u.nama, u.email, u.password, u.role, u.status,
+                    SELECT u.id_user, u.nama, u.email, u.password, u.role, u.status, pk.id_paketkelas,
                            pk.nama_kelas
                     FROM users u
                     LEFT JOIN pesertakelas pkls ON u.id_user = pkls.id_user AND pkls.status = 1
@@ -43,7 +43,7 @@ def get_login(payload):
                 if check_password_hash(result['password'], payload['password']):
                     access_token = create_access_token(
                         identity=str(result['id_user']),
-                        additional_claims={"role": result['role']}
+                        additional_claims={"role": result['role'], 'id_paketkelas': result['id_paketkelas']}
                     )
                     return {
                         'access_token': access_token,
@@ -52,6 +52,7 @@ def get_login(payload):
                         'nama': result['nama'],
                         'email': result['email'],
                         'role': result['role'],
+                        'id_paketkelas': result['id_paketkelas'],
                         'nama_kelas': result['nama_kelas']  # Bisa NULL kalau belum ikut kelas
                     }
             return None
@@ -84,7 +85,7 @@ def ambil_kelas_saya(id_user):
                     'email': result['email'],
                     'role': result['role'],
                     'status': result['status'],
-                    'id_kelas': result['id_paketkelas'],   # bisa NULL kalau belum ikut kelas
+                    'id_paketkelas': result['id_paketkelas'],   # bisa NULL kalau belum ikut kelas
                     'nama_kelas': result['nama_kelas']     # bisa NULL kalau belum ikut kelas
                 }
             return None
@@ -96,14 +97,11 @@ def get_login_web(payload):
     engine = get_connection()
     try:
         with engine.begin() as connection:
-            # Ambil data user
-            result = connection.execute(
+            # 🔎 Ambil data user dulu (tanpa join ke kelas)
+            user = connection.execute(
                 text("""
-                    SELECT u.id_user, u.nama, u.email, u.password, u.role, u.status,
-                           pk.nama_kelas
+                    SELECT u.id_user, u.nama, u.email, u.password, u.role, u.status
                     FROM users u
-                    LEFT JOIN pesertakelas pkls ON u.id_user = pkls.id_user AND pkls.status = 1
-                    LEFT JOIN paketkelas pk ON pkls.id_paketkelas = pk.id_paketkelas AND pk.status = 1
                     WHERE u.email = :email
                     AND u.status = 1
                     LIMIT 1;
@@ -111,89 +109,144 @@ def get_login_web(payload):
                 {"email": payload['email']}
             ).mappings().fetchone()
 
-            if result and result['password']:
-                if check_password_hash(result['password'], payload['password']):
-                    # 🔑 Kalau role = admin / mentor → return sederhana
-                    if result['role'] in ["admin", "mentor"]:
-                        access_token = create_access_token(
-                            identity=str(result['id_user']),
-                            additional_claims={"role": result['role']}
-                        )
-                        return {
-                            'access_token': access_token,
-                            'message': 'login success',
-                            'id_user': result['id_user'],
-                            'nama': result['nama'],
-                            'email': result['email'],
-                            'role': result['role'],
-                            'nama_kelas': result['nama_kelas']  # Bisa NULL
-                        }
+            if not user or not user['password']:
+                return None
 
-                    # 🔑 Kalau role = peserta → pakai mekanisme session (seperti kode awalmu)
-                    new_session_id = str(uuid.uuid4())
+            if not check_password_hash(user['password'], payload['password']):
+                return None
 
-                    access_token = create_access_token(
-                        identity=str(result['id_user']),
-                        additional_claims={
-                            "role": result['role'],
+            id_paketkelas = None
+            nama_kelas = None
+
+            # 🔑 Kalau role = mentor → ambil dari mentorkelas
+            if user['role'] == "mentor":
+                kelas = connection.execute(
+                    text("""
+                        SELECT mk.id_paketkelas, pk.nama_kelas
+                        FROM mentorkelas mk
+                        JOIN paketkelas pk ON mk.id_paketkelas = pk.id_paketkelas
+                        WHERE mk.id_user = :id_user
+                          AND mk.status = 1
+                          AND pk.status = 1
+                        LIMIT 1
+                    """),
+                    {"id_user": user['id_user']}
+                ).mappings().fetchone()
+                if kelas:
+                    id_paketkelas = kelas['id_paketkelas']
+                    nama_kelas = kelas['nama_kelas']
+
+            # 🔑 Kalau role = peserta → ambil dari pesertakelas
+            elif user['role'] == "peserta":
+                kelas = connection.execute(
+                    text("""
+                        SELECT pkls.id_paketkelas, pk.nama_kelas
+                        FROM pesertakelas pkls
+                        JOIN paketkelas pk ON pkls.id_paketkelas = pk.id_paketkelas
+                        WHERE pkls.id_user = :id_user
+                          AND pkls.status = 1
+                          AND pk.status = 1
+                        LIMIT 1
+                    """),
+                    {"id_user": user['id_user']}
+                ).mappings().fetchone()
+                if kelas:
+                    id_paketkelas = kelas['id_paketkelas']
+                    nama_kelas = kelas['nama_kelas']
+
+            # 🔑 Kalau role = admin → tidak terikat kelas
+            elif user['role'] == "admin":
+                id_paketkelas = None
+                nama_kelas = None
+
+            # === JWT & Session Handling ===
+            if user['role'] in ["admin", "mentor"]:
+                access_token = create_access_token(
+                    identity=str(user['id_user']),
+                    additional_claims={
+                        "role": user['role'],
+                        "id_paketkelas": id_paketkelas
+                    }
+                )
+                return {
+                    'access_token': access_token,
+                    'message': 'login success',
+                    'id_user': user['id_user'],
+                    'nama': user['nama'],
+                    'email': user['email'],
+                    'role': user['role'],
+                    'id_paketkelas': id_paketkelas,
+                    'nama_kelas': nama_kelas
+                }
+
+            elif user['role'] == "peserta":
+                new_session_id = str(uuid.uuid4())
+
+                access_token = create_access_token(
+                    identity=str(user['id_user']),
+                    additional_claims={
+                        "role": user['role'],
+                        "id_paketkelas": id_paketkelas,
+                        "session_id": new_session_id,
+                        "device_type": "web"
+                    }
+                )
+
+                # Cek apakah sudah ada session lama
+                old_session = connection.execute(
+                    text("""
+                        SELECT id_session FROM sessions
+                        WHERE id_user = :id_user AND device_type = 'web'
+                        LIMIT 1
+                    """),
+                    {"id_user": user['id_user']}
+                ).fetchone()
+
+                if old_session:
+                    connection.execute(
+                        text("""
+                            UPDATE sessions
+                            SET session_id = :session_id,
+                                jwt_token = :jwt_token,
+                                status = 1,
+                                updated_at = NOW()
+                            WHERE id_session = :id_session
+                        """),
+                        {
                             "session_id": new_session_id,
-                            "device_type": "web"
+                            "jwt_token": access_token,
+                            "id_session": old_session.id_session
+                        }
+                    )
+                else:
+                    connection.execute(
+                        text("""
+                            INSERT INTO sessions (id_user, device_type, session_id, jwt_token, status, created_at, updated_at)
+                            VALUES (:id_user, 'web', :session_id, :jwt_token, 1, NOW(), NOW())
+                        """),
+                        {
+                            "id_user": user['id_user'],
+                            "session_id": new_session_id,
+                            "jwt_token": access_token
                         }
                     )
 
-                    # Cek apakah sudah ada session lama
-                    old_session = connection.execute(
-                        text("""
-                            SELECT id_session FROM sessions
-                            WHERE id_user = :id_user AND device_type = 'web'
-                            LIMIT 1
-                        """),
-                        {"id_user": result['id_user']}
-                    ).fetchone()
-
-                    if old_session:
-                        connection.execute(
-                            text("""
-                                UPDATE sessions
-                                SET session_id = :session_id,
-                                    jwt_token = :jwt_token,
-                                    status = 1,
-                                    updated_at = NOW()
-                                WHERE id_session = :id_session
-                            """),
-                            {
-                                "session_id": new_session_id,
-                                "jwt_token": access_token,
-                                "id_session": old_session.id_session
-                            }
-                        )
-                    else:
-                        connection.execute(
-                            text("""
-                                INSERT INTO sessions (id_user, device_type, session_id, jwt_token, status, created_at, updated_at)
-                                VALUES (:id_user, 'web', :session_id, :jwt_token, 1, NOW(), NOW())
-                            """),
-                            {
-                                "id_user": result['id_user'],
-                                "session_id": new_session_id,
-                                "jwt_token": access_token
-                            }
-                        )
-
-                    return {
-                        'access_token': access_token,
-                        'message': 'login success',
-                        'id_user': result['id_user'],
-                        'nama': result['nama'],
-                        'email': result['email'],
-                        'role': result['role'],
-                        'nama_kelas': result['nama_kelas']
-                    }
+                return {
+                    'access_token': access_token,
+                    'message': 'login success',
+                    'id_user': user['id_user'],
+                    'nama': user['nama'],
+                    'email': user['email'],
+                    'role': user['role'],
+                    'id_paketkelas': id_paketkelas,
+                    'nama_kelas': nama_kelas
+                }
 
         return None
     except SQLAlchemyError as e:
-        print(f"Error occurred: {str(e)}")
+        print(f"[get_login_web] Error: {str(e)}")
         return {'msg': 'Internal server error'}
+
     
 def get_login_mobile(payload):
     engine = get_connection()
@@ -202,7 +255,7 @@ def get_login_mobile(payload):
             # Ambil data user
             result = connection.execute(
                 text("""
-                    SELECT u.id_user, u.nama, u.email, u.password, u.role, u.status,
+                    SELECT u.id_user, u.nama, u.email, u.password, u.role, u.status, pk.id_paketkelas,
                            pk.nama_kelas
                     FROM users u
                     LEFT JOIN pesertakelas pkls ON u.id_user = pkls.id_user AND pkls.status = 1
@@ -224,6 +277,8 @@ def get_login_mobile(payload):
                         identity=str(result['id_user']),
                         additional_claims={
                             "role": result['role'],
+                            "id_paketkelas": result['id_paketkelas'],
+                            "kelas": result['kelas'],
                             "session_id": new_session_id,
                             "device_type": "mobile"
                         }
@@ -277,6 +332,7 @@ def get_login_mobile(payload):
                         'nama': result['nama'],
                         'email': result['email'],
                         'role': result['role'],
+                        'id_paketkelas': result['id_paketkelas'],
                         'nama_kelas': result['nama_kelas']
                     }
 

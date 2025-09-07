@@ -28,11 +28,13 @@ class KomentarMateriResource(Resource):
         """Akses: (mentor/peserta), Ambil komentar materi sesuai hak akses kelas"""
         current_user_id = get_jwt_identity()
         current_role = get_jwt()['role']
+        id_paketkelas = get_jwt()['id_paketkelas']
+        print(f'current_kelas: {id_paketkelas}, current_role: {current_role}')
 
-        if not is_user_have_access_to_materi(current_user_id, id_materi, current_role):
+        if not is_user_have_access_to_materi(current_user_id, id_materi, current_role, id_paketkelas):
             return {"status": "error", "message": "Akses ditolak."}, 403
 
-        komentar = get_komentar_by_materi(id_materi)
+        komentar = get_komentar_by_materi(id_materi, id_paketkelas)
         return {"status": "success", "total": len(komentar), "data": komentar}, 200
 
     @komentarmateri_ns.expect(komentar_post_parser)
@@ -46,13 +48,14 @@ class KomentarMateriResource(Resource):
         parent_id = args.get("parent_id")
         current_user_id = get_jwt_identity()
         current_role = get_jwt()['role']
+        id_paketkelas = get_jwt()['id_paketkelas']
 
-        if not is_user_have_access_to_materi(current_user_id, id_materi, current_role):
+        if not is_user_have_access_to_materi(current_user_id, id_materi, current_role, id_paketkelas):
             return {"status": "error", "message": "Akses ditolak."}, 403
         if parent_id and not is_valid_parent_komentar(id_materi, parent_id):
             return {"status": "error", "message": "Komentar induk tidak valid"}, 400
 
-        id_komentar = insert_komentar_materi(id_materi, current_user_id, isi_komentar, parent_id)
+        id_komentar = insert_komentar_materi(id_materi, current_user_id, isi_komentar, id_paketkelas, parent_id)
         if id_komentar:
             return {"status": "success", "message": "Komentar berhasil ditambahkan", "id_komentarmateri": id_komentar}, 201
         else:

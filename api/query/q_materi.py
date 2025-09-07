@@ -11,13 +11,16 @@ def is_valid_modul(id_modul):
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT id_modul FROM modul WHERE id_modul = :id AND status = 1
+                SELECT id_modul 
+                FROM modul 
+                WHERE id_modul = :id AND status = 1
             """), {"id": id_modul}).scalar()
             return result is not None
     except SQLAlchemyError:
         return False
-    
-def is_mentor_of_materi(id_mentor, id_materi):
+
+def is_mentor_of_materi(id_mentor, id_materi, id_paketkelas):
+    """Cek apakah mentor tertentu mengampu materi dalam paket kelas tertentu"""
     engine = get_connection()
     try:
         with engine.connect() as conn:
@@ -25,48 +28,89 @@ def is_mentor_of_materi(id_mentor, id_materi):
                 SELECT 1
                 FROM materi m
                 JOIN modul mo ON m.id_modul = mo.id_modul
-                JOIN paketkelas pk ON mo.id_paketkelas = pk.id_paketkelas
+                JOIN modulkelas mkls ON mo.id_modul = mkls.id_modul
+                JOIN paketkelas pk ON mkls.id_paketkelas = pk.id_paketkelas
                 JOIN mentorkelas mk ON pk.id_paketkelas = mk.id_paketkelas
                 WHERE m.id_materi = :id_materi
-                AND mk.id_user = :id_mentor
-                AND m.status = 1
-            """), {"id_materi": id_materi, "id_mentor": id_mentor}).first()
+                  AND pk.id_paketkelas = :id_paketkelas
+                  AND mk.id_user = :id_mentor
+                  AND m.status = 1
+                  AND mk.status = 1
+                  AND mkls.status = 1
+            """), {
+                "id_materi": id_materi,
+                "id_paketkelas": id_paketkelas,
+                "id_mentor": id_mentor
+            }).first()
             return result is not None
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
+        print(f"[is_mentor_of_materi] Error: {e}")
         return False
     
-def is_user_have_access_to_materi(id_user, id_materi, role):
+def is_mentor_of_modul(id_user, id_modul):
     engine = get_connection()
     try:
         with engine.connect() as conn:
-            query = """
+            result = conn.execute(text("""
                 SELECT 1
+                FROM modul m
+                JOIN modulkelas mkls ON m.id_modul = mkls.id_modul AND mkls.status = 1
+                JOIN mentorkelas mtr ON mkls.id_paketkelas = mtr.id_paketkelas AND mtr.status = 1
+                WHERE m.id_modul = :id_modul
+                  AND mtr.id_user = :id_user
+                  AND m.status = 1
+                LIMIT 1
+            """), {"id_user": id_user, "id_modul": id_modul}).first()
+            return result is not None
+    except SQLAlchemyError as e:
+        print(f"Error is_mentor_of_modul: {e}")
+        return False
+
+def is_user_have_access_to_materi(id_user, id_materi, role, id_paketkelas):
+    """Validasi apakah user (mentor/peserta) punya akses ke materi dalam paket kelas tertentu"""
+    engine = get_connection()
+    try:
+        with engine.connect() as conn:
+            base_query = """
                 FROM materi m
                 JOIN modul mo ON m.id_modul = mo.id_modul
-                JOIN paketkelas pk ON mo.id_paketkelas = pk.id_paketkelas
+                JOIN modulkelas mkls ON mo.id_modul = mkls.id_modul
+                JOIN paketkelas pk ON mkls.id_paketkelas = pk.id_paketkelas
             """
+
             if role == 'mentor':
-                query += """
+                query = f"""
+                    SELECT 1 {base_query}
                     JOIN mentorkelas mk ON pk.id_paketkelas = mk.id_paketkelas
                     WHERE mk.id_user = :id_user
+                      AND pk.id_paketkelas = :id_paketkelas
+                      AND m.id_materi = :id_materi
+                      AND m.status = 1
+                      AND mk.status = 1
+                      AND mkls.status = 1
                 """
             elif role == 'peserta':
-                query += """
+                query = f"""
+                    SELECT 1 {base_query}
                     JOIN pesertakelas ps ON pk.id_paketkelas = ps.id_paketkelas
                     WHERE ps.id_user = :id_user
+                      AND pk.id_paketkelas = :id_paketkelas
+                      AND m.id_materi = :id_materi
+                      AND m.status = 1
+                      AND ps.status = 1
+                      AND mkls.status = 1
                 """
             else:
                 return False
 
-            query += " AND m.id_materi = :id_materi AND m.status = 1"
-
             result = conn.execute(text(query), {
                 "id_user": id_user,
-                "id_materi": id_materi
+                "id_materi": id_materi,
+                "id_paketkelas": id_paketkelas
             }).first()
             return result is not None
     except SQLAlchemyError as e:
-        print(f"Error: {e}")
+        print(f"[is_user_have_access_to_materi] Error: {e}")
         return False
 
 
@@ -76,7 +120,9 @@ def get_all_materi():
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT m.*, mo.judul AS judul_modul
+                SELECT m.id_materi, m.id_modul, m.tipe_materi, m.judul, m.url_file,
+                       m.viewer_only, m.visibility, m.status, m.created_at, m.updated_at,
+                       mo.judul AS judul_modul
                 FROM materi m
                 JOIN modul mo ON m.id_modul = mo.id_modul
                 WHERE m.status = 1
@@ -92,13 +138,16 @@ def get_materi_by_id(id_materi):
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT m.*, mo.judul AS judul_modul
+                SELECT m.id_materi, m.id_modul, m.tipe_materi, m.judul, m.url_file,
+                       m.viewer_only, m.visibility, m.status, m.created_at, m.updated_at,
+                       mo.judul AS judul_modul
                 FROM materi m
                 JOIN modul mo ON m.id_modul = mo.id_modul
                 WHERE m.id_materi = :id AND m.status = 1
             """), {"id": id_materi}).mappings().fetchone()
             return serialize_row(result) if result else None
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
+        print(f"Error: {e}")
         return None
 
 def insert_materi(payload):
@@ -156,35 +205,44 @@ def get_materi_by_peserta(id_user):
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, m.viewer_only, m.id_modul, pk.id_paketkelas, pk.nama_kelas
+                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, m.viewer_only,
+                       m.id_modul, pk.id_paketkelas, pk.nama_kelas
                 FROM materi m
                 JOIN modul mo ON m.id_modul = mo.id_modul
-                JOIN paketkelas pk ON mo.id_paketkelas = pk.id_paketkelas
+                JOIN modulkelas mk ON mk.id_modul = mo.id_modul
+                JOIN paketkelas pk ON mk.id_paketkelas = pk.id_paketkelas
                 JOIN userbatch ub ON ub.id_user = :id_user
                 JOIN pesertakelas pkls ON pkls.id_user = :id_user
                 WHERE pk.id_batch = ub.id_batch
                   AND pkls.id_paketkelas = pk.id_paketkelas
-                  AND m.visibility = 'open' AND m.status = 1
-                ORDER BY mo.urutan_modul ASC
+                  AND m.visibility = 'open'
+                  AND m.status = 1
+                  AND mk.status = 1
+                ORDER BY mo.created_at ASC
             """), {"id_user": id_user}).mappings().fetchall()
             return [dict(row) for row in result]
     except SQLAlchemyError as e:
         print(f"[get_materi_by_peserta] Error: {str(e)}")
         return []
-    
+
+
 def get_materi_by_mentor(id_user):
     engine = get_connection()
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, m.viewer_only, m.id_modul, pk.id_paketkelas, pk.nama_kelas
+                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, m.viewer_only,
+                       m.id_modul, pk.id_paketkelas, pk.nama_kelas
                 FROM materi m
                 JOIN modul mo ON m.id_modul = mo.id_modul
-                JOIN paketkelas pk ON mo.id_paketkelas = pk.id_paketkelas
+                JOIN modulkelas mk ON mk.id_modul = mo.id_modul
+                JOIN paketkelas pk ON mk.id_paketkelas = pk.id_paketkelas
                 JOIN mentorkelas mkls ON mkls.id_user = :id_user
                 WHERE mkls.id_paketkelas = pk.id_paketkelas
                   AND m.status = 1
-                ORDER BY mo.urutan_modul ASC
+                  AND mk.status = 1
+                  AND mkls.status = 1
+                ORDER BY mo.created_at ASC
             """), {"id_user": id_user}).mappings().fetchall()
             return [dict(row) for row in result]
     except SQLAlchemyError as e:
