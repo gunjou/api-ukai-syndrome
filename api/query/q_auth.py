@@ -278,7 +278,7 @@ def get_login_mobile(payload):
                         additional_claims={
                             "role": result['role'],
                             "id_paketkelas": result['id_paketkelas'],
-                            "kelas": result['kelas'],
+                            "nama_kelas": result['nama_kelas'],
                             "session_id": new_session_id,
                             "device_type": "mobile"
                         }
