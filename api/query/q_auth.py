@@ -252,93 +252,136 @@ def get_login_mobile(payload):
     engine = get_connection()
     try:
         with engine.begin() as connection:
-            # Ambil data user
-            result = connection.execute(
+            # 🔎 Ambil data user dulu (tanpa join ke kelas)
+            user = connection.execute(
                 text("""
-                    SELECT u.id_user, u.nama, u.email, u.password, u.role, u.status, pk.id_paketkelas,
-                           pk.nama_kelas
+                    SELECT u.id_user, u.nama, u.email, u.password, u.role, u.status
                     FROM users u
-                    LEFT JOIN pesertakelas pkls ON u.id_user = pkls.id_user AND pkls.status = 1
-                    LEFT JOIN paketkelas pk ON pkls.id_paketkelas = pk.id_paketkelas AND pk.status = 1
                     WHERE u.email = :email
-                    AND u.status = 1
+                      AND u.status = 1
                     LIMIT 1;
                 """),
                 {"email": payload['email']}
             ).mappings().fetchone()
 
-            if result and result['password']:
-                if check_password_hash(result['password'], payload['password']):
-                    # Generate session baru
-                    new_session_id = str(uuid.uuid4())
+            if not user or not user['password']:
+                return None
 
-                    # Buat JWT baru dengan session_id
-                    access_token = create_access_token(
-                        identity=str(result['id_user']),
-                        additional_claims={
-                            "role": result['role'],
-                            "id_paketkelas": result['id_paketkelas'],
-                            "nama_kelas": result['nama_kelas'],
-                            "session_id": new_session_id,
-                            "device_type": "mobile"
-                        }
-                    )
+            if not check_password_hash(user['password'], payload['password']):
+                return None
 
-                    # Cek apakah ada session existing
-                    old_session = connection.execute(
-                        text("""
-                            SELECT id_session FROM sessions
-                            WHERE id_user = :id_user AND device_type = 'mobile'
-                            LIMIT 1
-                        """),
-                        {"id_user": result['id_user']}
-                    ).fetchone()
+            id_paketkelas = None
+            nama_kelas = None
 
-                    if old_session:
-                        # Update session lama jadi session baru
-                        connection.execute(
-                            text("""
-                                UPDATE sessions
-                                SET session_id = :session_id,
-                                    jwt_token = :jwt_token,
-                                    status = 1,
-                                    updated_at = NOW()
-                                WHERE id_session = :id_session
-                            """),
-                            {
-                                "session_id": new_session_id,
-                                "jwt_token": access_token,
-                                "id_session": old_session.id_session
-                            }
-                        )
-                    else:
-                        # Kalau belum ada → insert session baru
-                        connection.execute(
-                            text("""
-                                INSERT INTO sessions (id_user, device_type, session_id, jwt_token, status, created_at, updated_at)
-                                VALUES (:id_user, 'mobile', :session_id, :jwt_token, 1, NOW(), NOW())
-                            """),
-                            {
-                                "id_user": result['id_user'],
-                                "session_id": new_session_id,
-                                "jwt_token": access_token
-                            }
-                        )
+            # 🔑 Kalau role = mentor → ambil dari mentorkelas
+            if user['role'] == "mentor":
+                kelas = connection.execute(
+                    text("""
+                        SELECT mk.id_paketkelas, pk.nama_kelas
+                        FROM mentorkelas mk
+                        JOIN paketkelas pk ON mk.id_paketkelas = pk.id_paketkelas
+                        WHERE mk.id_user = :id_user
+                          AND mk.status = 1
+                          AND pk.status = 1
+                        LIMIT 1
+                    """),
+                    {"id_user": user['id_user']}
+                ).mappings().fetchone()
+                if kelas:
+                    id_paketkelas = kelas['id_paketkelas']
+                    nama_kelas = kelas['nama_kelas']
 
-                    return {
-                        'access_token': access_token,
-                        'message': 'login success',
-                        'id_user': result['id_user'],
-                        'nama': result['nama'],
-                        'email': result['email'],
-                        'role': result['role'],
-                        'id_paketkelas': result['id_paketkelas'],
-                        'nama_kelas': result['nama_kelas']
+            # 🔑 Kalau role = peserta → ambil dari pesertakelas
+            elif user['role'] == "peserta":
+                kelas = connection.execute(
+                    text("""
+                        SELECT pkls.id_paketkelas, pk.nama_kelas
+                        FROM pesertakelas pkls
+                        JOIN paketkelas pk ON pkls.id_paketkelas = pk.id_paketkelas
+                        WHERE pkls.id_user = :id_user
+                          AND pkls.status = 1
+                          AND pk.status = 1
+                        LIMIT 1
+                    """),
+                    {"id_user": user['id_user']}
+                ).mappings().fetchone()
+                if kelas:
+                    id_paketkelas = kelas['id_paketkelas']
+                    nama_kelas = kelas['nama_kelas']
+
+            else:
+                # 🚫 Kalau role bukan peserta/mentor → tidak boleh login via mobile
+                return {'msg': 'Role tidak diizinkan untuk login di mobile'}
+
+            # === Session & JWT Handling ===
+            new_session_id = str(uuid.uuid4())
+
+            access_token = create_access_token(
+                identity=str(user['id_user']),
+                additional_claims={
+                    "role": user['role'],
+                    "id_paketkelas": id_paketkelas,
+                    "nama_kelas": nama_kelas,
+                    "session_id": new_session_id,
+                    "device_type": "mobile"
+                }
+            )
+
+            # Cek apakah ada session lama untuk mobile
+            old_session = connection.execute(
+                text("""
+                    SELECT id_session FROM sessions
+                    WHERE id_user = :id_user AND device_type = 'mobile'
+                    LIMIT 1
+                """),
+                {"id_user": user['id_user']}
+            ).fetchone()
+
+            if old_session:
+                # Update session lama
+                connection.execute(
+                    text("""
+                        UPDATE sessions
+                        SET session_id = :session_id,
+                            jwt_token = :jwt_token,
+                            status = 1,
+                            updated_at = NOW()
+                        WHERE id_session = :id_session
+                    """),
+                    {
+                        "session_id": new_session_id,
+                        "jwt_token": access_token,
+                        "id_session": old_session.id_session
                     }
+                )
+            else:
+                # Insert session baru
+                connection.execute(
+                    text("""
+                        INSERT INTO sessions (id_user, device_type, session_id, jwt_token, status, created_at, updated_at)
+                        VALUES (:id_user, 'mobile', :session_id, :jwt_token, 1, NOW(), NOW())
+                    """),
+                    {
+                        "id_user": user['id_user'],
+                        "session_id": new_session_id,
+                        "jwt_token": access_token
+                    }
+                )
+
+            return {
+                'access_token': access_token,
+                'message': 'login success',
+                'id_user': user['id_user'],
+                'nama': user['nama'],
+                'email': user['email'],
+                'role': user['role'],
+                'id_paketkelas': id_paketkelas,
+                'nama_kelas': nama_kelas
+            }
 
         return None
     except SQLAlchemyError as e:
-        print(f"Error occurred: {str(e)}")
+        print(f"[get_login_mobile] Error: {str(e)}")
         return {'msg': 'Internal server error'}
     
 # def register_peserta(payload):
