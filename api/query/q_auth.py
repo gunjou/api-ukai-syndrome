@@ -4,20 +4,10 @@ import uuid
 from flask_jwt_extended import create_access_token
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from ..utils.config import get_connection, get_wita
 
-
-def get_user_by_id(user_id):
-    engine = get_connection()
-    with engine.connect() as connection:
-        result = connection.execute(text("""
-            SELECT id_user, nama, email, role, status
-            FROM users
-            WHERE id_user = :id_user AND status = 1
-        """), {"id_user": user_id}).mappings().fetchone()
-        return dict(result) if result else None
 
 def get_login(payload):
     engine = get_connection()
@@ -55,39 +45,6 @@ def get_login(payload):
                         'id_paketkelas': result['id_paketkelas'],
                         'nama_kelas': result['nama_kelas']  # Bisa NULL kalau belum ikut kelas
                     }
-            return None
-    except SQLAlchemyError as e:
-        print(f"Error occurred: {str(e)}")
-        return {'msg': 'Internal server error'}
-    
-def ambil_kelas_saya(id_user):
-    engine = get_connection()
-    try:
-        with engine.connect() as connection:
-            result = connection.execute(
-                text("""
-                    SELECT u.id_user, u.nama, u.email, u.role, u.status,
-                           pk.id_paketkelas, pk.nama_kelas
-                    FROM users u
-                    LEFT JOIN pesertakelas pkls ON u.id_user = pkls.id_user AND pkls.status = 1
-                    LEFT JOIN paketkelas pk ON pkls.id_paketkelas = pk.id_paketkelas AND pk.status = 1
-                    WHERE u.id_user = :id_user
-                    AND u.status = 1
-                    LIMIT 1;
-                """),
-                {"id_user": id_user}
-            ).mappings().fetchone()
-
-            if result:
-                return {
-                    'id_user': result['id_user'],
-                    'nama': result['nama'],
-                    'email': result['email'],
-                    'role': result['role'],
-                    'status': result['status'],
-                    'id_paketkelas': result['id_paketkelas'],   # bisa NULL kalau belum ikut kelas
-                    'nama_kelas': result['nama_kelas']     # bisa NULL kalau belum ikut kelas
-                }
             return None
     except SQLAlchemyError as e:
         print(f"Error occurred: {str(e)}")

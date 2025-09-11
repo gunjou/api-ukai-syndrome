@@ -49,21 +49,6 @@ register_complete_model = auth_ns.model("RegisterComplete", {
     "no_hp": fields.String(required=True, description="Nomor HP"),
     "password": fields.String(required=True, description="Password untuk login")
 })
-
-@auth_ns.route('/me')
-class MeResource(Resource):
-    @session_required
-    @jwt_required()
-    def get(self):
-        """Ambil data user dari JWT token"""
-        user_id = get_jwt_identity()
-        try:
-            user = get_user_by_id(user_id)
-            if not user:
-                return {"status": "error", "message": "User tidak ditemukan"}, 404
-            return {"data": user}, 200
-        except SQLAlchemyError as e:
-            return {"status": "error", "message": "Server error"}, 500
         
 
 @auth_ns.route('/protected')
@@ -95,24 +80,6 @@ class LoginAdminResource(Resource):
             return {'status': "Internal server error"}, 500
         
 
-@auth_ns.route('/kelas-saya')
-class GetUserResource(Resource):
-    @session_required
-    @jwt_required()
-    def get(self):
-        """Ambil data user yang sedang login berdasarkan id_user dari JWT"""
-        try:
-            id_user = get_jwt_identity()  # id_user disimpan saat login di access_token
-            user_data = ambil_kelas_saya(id_user)
-
-            if user_data is None:
-                return {'status': "User not found"}, 404
-            return user_data, 200
-        except SQLAlchemyError as e:
-            auth_ns.logger.error(f"Database error: {str(e)}")
-            return {'status': "Internal server error"}, 500
-        
-
 @auth_ns.route('/login/web')
 class LoginWebResource(Resource):
     @auth_ns.expect(login_model)
@@ -137,7 +104,7 @@ class LoginWebResource(Resource):
 class LoginMobileResource(Resource):
     @auth_ns.expect(login_model)
     def post(self):
-        """Login khusus untuk mobile (admin/mentor/peserta), email + password"""
+        """Login khusus untuk mobile (mentor/peserta), email + password"""
         payload = request.get_json()
 
         if not payload.get('email') or not payload.get('password'):

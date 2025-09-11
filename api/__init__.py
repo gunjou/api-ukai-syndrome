@@ -10,6 +10,7 @@ from .utils.blacklist_store import is_blacklisted
 from .extensions import mail
 
 from .auth import auth_ns
+from .profile import profile_ns
 from .admin import admin_ns
 from .mentor import mentor_ns
 from .peserta import peserta_ns
@@ -70,6 +71,7 @@ restx_api = Api(
 )
 
 restx_api.add_namespace(auth_ns, path="/auth")
+restx_api.add_namespace(profile_ns, path="/profile")
 restx_api.add_namespace(admin_ns, path="/admin")
 restx_api.add_namespace(mentor_ns, path="/mentor")
 restx_api.add_namespace(peserta_ns, path="/peserta")
