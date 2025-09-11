@@ -1,3 +1,4 @@
+import re
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.security import generate_password_hash
@@ -56,12 +57,21 @@ def insert_mentor(payload):
                 payload['password'], method='pbkdf2:sha256'
             )
 
-            # Normalisasi no_hp
-            no_hp = payload.get("no_hp")
-            if not no_hp or str(no_hp).strip() == "":
-                no_hp = None
+            # ✅ Normalisasi no_hp
+            raw_no_hp = payload.get("no_hp")
+            if not raw_no_hp or str(raw_no_hp).strip() == "":
+                raw_no_hp = None 
+            else:
+                raw_no_hp = str(payload.get("no_hp", "")).strip() 
+                raw_no_hp = re.sub(r"[^\d+]", "", raw_no_hp)# Hapus semua karakter kecuali angka dan '+'
+                if raw_no_hp.startswith("'"): # Hapus tanda kutip tunggal di depan
+                    raw_no_hp = raw_no_hp[1:] 
+                if raw_no_hp.startswith("+62"): # Jika diawali dengan +62 → ganti jadi 0...
+                    raw_no_hp = "0" + raw_no_hp[3:] 
+                if raw_no_hp and not raw_no_hp.startswith("0"): # Jika tidak kosong dan tidak diawali dengan 0 → tambahkan 0
+                    raw_no_hp = "0" + raw_no_hp
 
-            # Insert ke users
+            # ✅ Insert ke users
             user_result = connection.execute(text("""
                 INSERT INTO users (nama, email, password, kode_pemulihan, role, status, created_at, updated_at, no_hp)
                 VALUES (:nama, :email, :hash_password, :kode_pemulihan, 'mentor', 1, :now, :now, :no_hp)
@@ -70,7 +80,7 @@ def insert_mentor(payload):
                 **payload,
                 "email": email,
                 "now": now,
-                "no_hp": no_hp
+                "no_hp": raw_no_hp
             }).mappings().fetchone()
 
             if not user_result:
@@ -78,7 +88,7 @@ def insert_mentor(payload):
 
             id_user = user_result["id_user"]
 
-            # Insert ke mentorkelas (opsional)
+            # ✅ Insert ke mentorkelas (opsional)
             if payload.get("id_paketkelas"):
                 connection.execute(text("""
                     INSERT INTO mentorkelas (id_user, id_paketkelas, status, created_at, updated_at)
@@ -120,11 +130,21 @@ def update_mentor(id_mentor, payload):
 
     try:
         with engine.begin() as connection:
+            # ✅ Normalisasi no_hp
+            raw_no_hp = str(payload.get("no_hp", "")).strip() 
+            raw_no_hp = re.sub(r"[^\d+]", "", raw_no_hp)# Hapus semua karakter kecuali angka dan '+'
+            if raw_no_hp.startswith("'"): # Hapus tanda kutip tunggal di depan
+                raw_no_hp = raw_no_hp[1:] 
+            if raw_no_hp.startswith("+62"): # Jika diawali dengan +62 → ganti jadi 0...
+                raw_no_hp = "0" + raw_no_hp[3:] 
+            if raw_no_hp and not raw_no_hp.startswith("0"): # Jika tidak kosong dan tidak diawali dengan 0 → tambahkan 0
+                raw_no_hp = "0" + raw_no_hp
+                
             # --- Update data di users ---
             fields_to_update = {
                 "nama": payload["nama"],
                 "email": payload["email"],
-                "no_hp": payload.get("no_hp") if payload.get("no_hp") != "" else None,
+                "no_hp": raw_no_hp if payload.get("no_hp") != "" else None,
                 "kode_pemulihan": payload["kode_pemulihan"],
                 "updated_at": now
             }

@@ -9,7 +9,7 @@ def get_user_by_id(user_id):
     engine = get_connection()
     with engine.connect() as connection:
         result = connection.execute(text("""
-            SELECT id_user, nama, email, role, status
+            SELECT id_user, nama, email, no_hp, role, status
             FROM users
             WHERE id_user = :id_user AND status = 1
         """), {"id_user": user_id}).mappings().fetchone()
@@ -92,7 +92,7 @@ def ambil_kelas_saya(id_user, role):
             # Ambil data user dulu
             user_result = connection.execute(
                 text("""
-                    SELECT id_user, nama, email, role, status
+                    SELECT id_user, nama, email, no_hp, role, status
                     FROM users
                     WHERE id_user = :id_user AND status = 1
                     LIMIT 1

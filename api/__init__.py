@@ -14,6 +14,7 @@ from .profile import profile_ns
 from .admin import admin_ns
 from .mentor import mentor_ns
 from .peserta import peserta_ns
+from .paket import paket_ns
 from .batch import batch_ns
 from .paketkelas import kelas_ns
 from .mentorkelas import mentorkelas_ns
@@ -75,6 +76,7 @@ restx_api.add_namespace(profile_ns, path="/profile")
 restx_api.add_namespace(admin_ns, path="/admin")
 restx_api.add_namespace(mentor_ns, path="/mentor")
 restx_api.add_namespace(peserta_ns, path="/peserta")
+restx_api.add_namespace(paket_ns, path="/paket")
 restx_api.add_namespace(batch_ns, path="/batch")
 restx_api.add_namespace(kelas_ns, path="/paket-kelas")
 restx_api.add_namespace(mentorkelas_ns, path="/mentor-kelas")

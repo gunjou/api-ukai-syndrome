@@ -9,6 +9,7 @@ kelas_ns = Namespace("kelas", description="Manajemen paket kelas")
 
 kelas_model = kelas_ns.model("Kelas", {
     "id_batch": fields.Integer(required=True, description="ID batch"),
+    "id_paket": fields.Integer(required=True, description="ID batch"),
     "nama_kelas": fields.String(required=True, description="Nama kelas"),
     "deskripsi": fields.String(required=True, description="Deskripsi kelas")
 })
@@ -17,14 +18,13 @@ kelas_model = kelas_ns.model("Kelas", {
 class KelasListResource(Resource):
     # @session_required
     @jwt_required()
-    @role_required(['admin', 'mentor'])
+    @role_required('admin')
     def get(self):
         """Akses: (admin, mentor), Ambil semua kelas aktif untuk admin, dan yang diampu oleh mentor"""
         try:
-            current_user_id = get_jwt_identity()
-            role = get_jwt().get('role')
+            # current_user_id = get_jwt_identity()
 
-            result = get_kelas_by_role(current_user_id, role)
+            result = get_kelas_by_admin()
 
             if not result:
                 return {"status": "error", "message": "Tidak ada kelas ditemukan"}, 404
@@ -40,14 +40,33 @@ class KelasListResource(Resource):
         payload = request.get_json()
 
         # Validasi batch
-        if not is_batch_exist(payload['id_batch']):
-            return {"status": "error", "message": "Batch tidak ditemukan"}, 404
+        # if not is_batch_exist(payload['id_batch']):
+        #     return {"status": "error", "message": "Batch tidak ditemukan"}, 404
 
         try:
             created = insert_kelas(payload)
             if not created:
                 return {"status": "error", "message": "Gagal menambahkan kelas"}, 400
             return {"status": f"Kelas '{created['nama_kelas']}' berhasil ditambahkan"}, 201
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+        
+
+@kelas_ns.route('/mentor')
+class KelasListResource(Resource):
+    # @session_required
+    @jwt_required()
+    @role_required('mentor')
+    def get(self):
+        """Akses: (admin, mentor), Ambil semua kelas aktif untuk admin, dan yang diampu oleh mentor"""
+        try:
+            current_user_id = get_jwt_identity()
+
+            result = get_kelas_by_mentor(current_user_id)
+
+            if not result:
+                return {"status": "error", "message": "Tidak ada kelas ditemukan"}, 404
+            return {"data": result}, 200
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
@@ -77,11 +96,12 @@ class KelasDetailResource(Resource):
             return {"status": "error", "message": "Kelas tidak ditemukan"}, 404
 
         # Jika batch diganti, cek juga validitasnya
-        if "id_batch" in data and not is_batch_exist(data["id_batch"]):
-            return {"status": "error", "message": "Batch tidak valid"}, 404
+        # if "id_batch" in data and not is_batch_exist(data["id_batch"]):
+        #     return {"status": "error", "message": "Batch tidak valid"}, 404
 
         updated_payload = {
             "id_batch": data.get("id_batch", old["id_batch"]),
+            "id_paket": data.get("id_paket", old["id_paket"]),
             "nama_kelas": data.get("nama_kelas", old["nama_kelas"]),
             "deskripsi": data.get("deskripsi", old["deskripsi"])
         }
@@ -93,6 +113,7 @@ class KelasDetailResource(Resource):
             return {"status": f"Kelas '{updated['nama_kelas']}' berhasil diperbarui"}, 200
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
+
 
     # @session_required
     @role_required('admin')

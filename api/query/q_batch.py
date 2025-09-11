@@ -10,10 +10,18 @@ def get_all_batch():
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT id_batch, nama_batch, tanggal_mulai, tanggal_selesai
-                FROM batch
-                WHERE status = 1
-                ORDER BY tanggal_mulai DESC
+                SELECT b.id_batch,
+                       b.nama_batch,
+                       b.tanggal_mulai,
+                       b.tanggal_selesai,
+                       COUNT(ub.id_userbatch) AS total_peserta
+                FROM batch b
+                LEFT JOIN userbatch ub 
+                       ON ub.id_batch = b.id_batch
+                      AND ub.status = 1
+                WHERE b.status = 1
+                GROUP BY b.id_batch, b.nama_batch, b.tanggal_mulai, b.tanggal_selesai
+                ORDER BY b.tanggal_mulai ASC
             """)).mappings().fetchall()
             return [serialize_row(row) for row in result]
     except SQLAlchemyError as e:

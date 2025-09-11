@@ -3,40 +3,78 @@ from sqlalchemy.exc import SQLAlchemyError
 from ..utils.config import get_connection, get_wita
 
 
-def get_kelas_by_role(id_user, role):
+def get_kelas_by_admin():
     engine = get_connection()
     try:
         with engine.connect() as conn:
-            if role == 'admin':
-                query = """
-                    SELECT pk.id_paketkelas, pk.nama_kelas, pk.deskripsi,
-                           b.id_batch, b.nama_batch, p.id_paket, p.nama_paket
-                    FROM paketkelas pk
-                    JOIN batch b ON pk.id_batch = b.id_batch and b.status = 1
-                    JOIN paket p ON pk.id_paket = p.id_paket and p.status = 1
-                    WHERE pk.status = 1
-                    ORDER BY pk.nama_kelas ASC
-                """
-                result = conn.execute(text(query)).mappings().fetchall()
-
-            elif role == 'mentor':
-                query = """
-                    SELECT pk.id_paketkelas, pk.nama_kelas, pk.deskripsi,
-                           b.id_batch, b.nama_batch
-                    FROM mentorkelas mk
-                    JOIN paketkelas pk ON mk.id_paketkelas = pk.id_paketkelas
-                    JOIN batch b ON pk.id_batch = b.id_batch
-                    WHERE mk.id_user = :id_user AND mk.status = 1 AND pk.status = 1
-                    ORDER BY pk.nama_kelas ASC
-                """
-                result = conn.execute(text(query), {"id_user": id_user}).mappings().fetchall()
-            else:
-                # Role tidak diizinkan
-                return []
+            query = """
+                SELECT pk.id_paketkelas, pk.nama_kelas, pk.deskripsi,
+                        b.id_batch, b.nama_batch, p.id_paket, p.nama_paket,
+                        COALESCE(tp.total_peserta, 0) AS total_peserta,
+                        COALESCE(tm.total_mentor, 0) AS total_mentor,
+                        COALESCE(tmd.total_modul, 0) AS total_modul
+                FROM paketkelas pk
+                JOIN batch b ON pk.id_batch = b.id_batch AND b.status = 1
+                JOIN paket p ON pk.id_paket = p.id_paket AND p.status = 1
+                LEFT JOIN (
+                    SELECT id_paketkelas, COUNT(*) AS total_peserta
+                    FROM pesertakelas
+                    WHERE status = 1
+                    GROUP BY id_paketkelas
+                ) tp ON pk.id_paketkelas = tp.id_paketkelas
+                LEFT JOIN (
+                    SELECT id_paketkelas, COUNT(*) AS total_mentor
+                    FROM mentorkelas
+                    WHERE status = 1
+                    GROUP BY id_paketkelas
+                ) tm ON pk.id_paketkelas = tm.id_paketkelas
+                LEFT JOIN (
+                    SELECT id_paketkelas, COUNT(*) AS total_modul
+                    FROM modulkelas
+                    WHERE status = 1
+                    GROUP BY id_paketkelas
+                ) tmd ON pk.id_paketkelas = tmd.id_paketkelas
+                WHERE pk.status = 1
+                ORDER BY pk.nama_kelas ASC
+            """
+            result = conn.execute(text(query)).mappings().fetchall()
+            # Pastikan count hasilnya integer, bukan Decimal
+            return [
+                {
+                    **dict(row),
+                    "total_peserta": int(row["total_peserta"]),
+                    "total_mentor": int(row["total_mentor"]),
+                    "total_modul": int(row["total_modul"]),
+                }
+                for row in result
+            ]
+    except SQLAlchemyError as e:
+        print(f"[get_kelas_by_role] Database error: {e}")
+        return []
+    
+def get_kelas_by_mentor(id_user):
+    engine = get_connection()
+    try:
+        with engine.connect() as conn:
+            query = """
+                SELECT pk.id_paketkelas, 
+                    pk.nama_kelas, 
+                    pk.deskripsi, 
+                    b.id_batch, 
+                    b.nama_batch
+                FROM mentorkelas mk
+                JOIN paketkelas pk ON mk.id_paketkelas = pk.id_paketkelas
+                JOIN batch b ON pk.id_batch = b.id_batch
+                WHERE mk.id_user = :id_user 
+                AND mk.status = 1 
+                AND pk.status = 1
+                ORDER BY pk.nama_kelas ASC
+            """
+            result = conn.execute(text(query), {"id_user": id_user}).mappings().fetchall()
 
             return [dict(row) for row in result]
     except SQLAlchemyError as e:
-        print(f"Database error: {e}")
+        print(f"[get_kelas_by_role] Database error: {e}")
         return []
 
 def get_kelas_by_id(id_kelas):
@@ -45,9 +83,10 @@ def get_kelas_by_id(id_kelas):
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT pk.id_paketkelas, pk.nama_kelas, pk.deskripsi,
-                       b.id_batch, b.nama_batch
+                       b.id_batch, b.nama_batch, p.id_paket, p.nama_paket
                 FROM paketkelas pk
-                JOIN batch b ON pk.id_batch = b.id_batch
+                JOIN batch b ON pk.id_batch = b.id_batch AND b.status = 1
+                JOIN paket p ON pk.id_paket = p.id_paket AND p.status = 1
                 WHERE pk.id_paketkelas = :id_kelas AND pk.status = 1
             """), {"id_kelas": id_kelas}).mappings().fetchone()
             return dict(result) if result else None
@@ -77,8 +116,8 @@ def insert_kelas(payload):
 
         with engine.begin() as conn:
             result = conn.execute(text("""
-                INSERT INTO paketkelas (id_batch, nama_kelas, deskripsi, status, created_at, updated_at)
-                VALUES (:id_batch, :nama_kelas, :deskripsi, 1, :now, :now)
+                INSERT INTO paketkelas (id_batch, id_paket, nama_kelas, deskripsi, status, created_at, updated_at)
+                VALUES (:id_batch, :id_paket, :nama_kelas, :deskripsi, 1, :now, :now)
                 RETURNING nama_kelas
             """), {
                 **payload,
@@ -86,7 +125,7 @@ def insert_kelas(payload):
             }).mappings().fetchone()
             return dict(result)
     except SQLAlchemyError as e:
-        print(f"Error: {e}")
+        print(f"[insert_kelas] Error: {e}")
         return None
 
 def update_kelas(id_kelas, payload):
@@ -95,9 +134,10 @@ def update_kelas(id_kelas, payload):
         with engine.begin() as conn:
             result = conn.execute(text("""
                 UPDATE paketkelas
-                SET id_batch = :id_batch,
+                SET id_batch   = :id_batch,
+                    id_paket   = :id_paket,
                     nama_kelas = :nama_kelas,
-                    deskripsi = :deskripsi,
+                    deskripsi  = :deskripsi,
                     updated_at = :now
                 WHERE id_paketkelas = :id_kelas AND status = 1
                 RETURNING nama_kelas
@@ -108,8 +148,9 @@ def update_kelas(id_kelas, payload):
             }).mappings().fetchone()
             return dict(result) if result else None
     except SQLAlchemyError as e:
-        print(f"Error: {e}")
+        print(f"[update_kelas] Error: {e}")
         return None
+
 
 def delete_kelas(id_kelas):
     engine = get_connection()

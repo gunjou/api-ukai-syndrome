@@ -1,4 +1,5 @@
 import random
+import re
 import string
 from datetime import datetime
 from sqlalchemy import text
@@ -221,11 +222,12 @@ def insert_bulk_peserta(peserta_list):
                     continue
 
                 # ✅ Normalisasi no_hp
-                raw_no_hp = str(peserta.get("no_hp", "")).strip()
+                raw_no_hp = str(peserta.get("no_hp", "")).strip() 
+                raw_no_hp = re.sub(r"[^\d+]", "", raw_no_hp)# Hapus semua karakter kecuali angka dan '+'
                 if raw_no_hp.startswith("'"): # Hapus tanda kutip tunggal di depan
-                    raw_no_hp = raw_no_hp[1:]
+                    raw_no_hp = raw_no_hp[1:] 
                 if raw_no_hp.startswith("+62"): # Jika diawali dengan +62 → ganti jadi 0...
-                    raw_no_hp = "0" + raw_no_hp[3:]
+                    raw_no_hp = "0" + raw_no_hp[3:] 
                 if raw_no_hp and not raw_no_hp.startswith("0"): # Jika tidak kosong dan tidak diawali dengan 0 → tambahkan 0
                     raw_no_hp = "0" + raw_no_hp
 
