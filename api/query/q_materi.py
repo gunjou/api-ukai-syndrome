@@ -121,7 +121,7 @@ def get_all_materi():
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT m.id_materi, m.id_modul, m.tipe_materi, m.judul, m.url_file,
-                       m.viewer_only, m.visibility, m.status, m.created_at, m.updated_at,
+                       m.visibility, m.status, m.created_at, m.updated_at,
                        mo.judul AS judul_modul
                 FROM materi m
                 JOIN modul mo ON m.id_modul = mo.id_modul
@@ -133,13 +133,28 @@ def get_all_materi():
         print(f"Error: {e}")
         return []
 
+def get_old_materi_by_id(id_materi):
+    engine = get_connection()
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT id_materi, id_modul, tipe_materi, judul, url_file,
+                       visibility, status, created_at, updated_at
+                FROM materi
+                WHERE id_materi = :id AND status = 1
+            """), {"id": id_materi}).mappings().fetchone()
+            return serialize_row(result) if result else None
+    except SQLAlchemyError as e:
+        print(f"Error: {e}")
+        return None
+    
 def get_materi_by_id(id_materi):
     engine = get_connection()
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT m.id_materi, m.id_modul, m.tipe_materi, m.judul, m.url_file,
-                       m.viewer_only, m.visibility, m.status, m.created_at, m.updated_at,
+                       m.visibility, m.status, m.created_at, m.updated_at,
                        mo.judul AS judul_modul
                 FROM materi m
                 JOIN modul mo ON m.id_modul = mo.id_modul
@@ -156,8 +171,8 @@ def insert_materi(payload):
         with engine.begin() as conn:
             now = get_wita()
             result = conn.execute(text("""
-                INSERT INTO materi (id_modul, tipe_materi, judul, url_file, viewer_only, status, created_at, updated_at)
-                VALUES (:id_modul, :tipe_materi, :judul, :url_file, :viewer_only, 1, :now, :now)
+                INSERT INTO materi (id_modul, tipe_materi, judul, url_file, status, created_at, updated_at)
+                VALUES (:id_modul, :tipe_materi, :judul, :url_file, 1, :now, :now)
                 RETURNING id_materi, judul
             """), {**payload, "now": now}).mappings().fetchone()
             return dict(result)
@@ -175,7 +190,7 @@ def update_materi(id_materi, payload):
                     tipe_materi = :tipe_materi,
                     judul = :judul,
                     url_file = :url_file,
-                    viewer_only = :viewer_only,
+                    visibility = :visibility,
                     updated_at = :now
                 WHERE id_materi = :id AND status = 1
                 RETURNING id_materi, judul
@@ -205,7 +220,7 @@ def get_materi_by_peserta(id_user):
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, m.viewer_only,
+                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file,
                        m.id_modul, pk.id_paketkelas, pk.nama_kelas
                 FROM materi m
                 JOIN modul mo ON m.id_modul = mo.id_modul
@@ -231,7 +246,7 @@ def get_materi_by_mentor(id_user):
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, m.viewer_only,
+                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file,
                        m.id_modul, pk.id_paketkelas, pk.nama_kelas
                 FROM materi m
                 JOIN modul mo ON m.id_modul = mo.id_modul
@@ -253,7 +268,6 @@ def update_materi_visibility(id_materi, visibility):
     engine = get_connection()
     try:
         with engine.begin() as conn:
-            now = get_wita()
             result = conn.execute(text("""
                 UPDATE materi
                 SET visibility = :visibility,
@@ -263,9 +277,12 @@ def update_materi_visibility(id_materi, visibility):
             """), {
                 "id_materi": id_materi,
                 "visibility": visibility,
-                "now": now
+                "now": get_wita()
             }).mappings().fetchone()
+
             return dict(result) if result else None
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
+        print(f"[update_materi_visibility] Error: {e}")
         return None
+
 

@@ -9,11 +9,10 @@ materi_ns = Namespace("materi", description="Manajemen Materi Modul")
 
 materi_model = materi_ns.model("Materi", {
     "id_modul": fields.Integer(required=True, description="ID Modul"),
-    "tipe_materi": fields.String(required=True, description="Jenis materi: video/pdf/file"),
+    "tipe_materi": fields.String(required=True, description="Jenis materi: video/document"),
     "judul": fields.String(required=True, description="Judul materi"),
     "url_file": fields.String(required=True, description="URL atau file path"),
     "visibility": fields.String(required=False, description="Status visibility (default: hold)"),
-    "viewer_only": fields.Boolean(required=True, description="Hanya bisa dilihat, tidak bisa diunduh")
 })
 
 visibility_model = materi_ns.model("ModulVisibility", {
@@ -81,7 +80,7 @@ class MateriDetailResource(Resource):
             "tipe_materi": data.get("tipe_materi", old["tipe_materi"]),
             "judul": data.get("judul", old["judul"]),
             "url_file": data.get("url_file", old["url_file"]),
-            "viewer_only": data.get("viewer_only", old["viewer_only"])
+            "visibility": data.get("visibility", old["visibility"])
         }
 
         if not is_valid_modul(updated["id_modul"]):
@@ -161,17 +160,14 @@ class MateriMentorResource(Resource):
         
 @materi_ns.route('/<int:id_materi>/visibility')
 class MateriVisibilityResource(Resource):
-    # @session_required
     @role_required(['admin', 'mentor'])
     @materi_ns.expect(visibility_model)
     def put(self, id_materi):
         """Akses: (admin/mentor), Ubah visibility materi"""
-        if not request.is_json:
-            return {"status": "error", "message": "Content-Type harus application/json"}, 400
-        
         data = request.get_json()
         visibility = data.get("visibility")
 
+        # Validasi nilai visibility
         if visibility not in ['open', 'hold', 'close']:
             return {"status": "error", "message": "Visibility tidak valid"}, 400
 
@@ -180,18 +176,10 @@ class MateriVisibilityResource(Resource):
         if not existing:
             return {"status": "error", "message": "Materi tidak ditemukan"}, 404
 
-        # Cek jika user adalah mentor, apakah dia punya akses ke materi
-        current_user_id = get_jwt_identity()
-        current_role = get_jwt()['role']
-        if current_role == 'mentor':
-            from .query.q_materi import is_mentor_of_materi
-            if not is_mentor_of_materi(current_user_id, id_materi):
-                return {"status": "error", "message": "Akses ditolak. Materi bukan milik Anda"}, 403
-
         try:
             result = update_materi_visibility(id_materi, visibility)
             if not result:
-                return {"status": "error", "message": "Gagal mengubah visibility"}, 400
+                return {"status": "error", "message": "Gagal update visibility"}, 400
             return {
                 "status": f"Visibility materi '{result['judul']}' berhasil diubah menjadi {visibility}"
             }, 200
