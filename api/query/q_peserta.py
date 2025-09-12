@@ -332,11 +332,21 @@ def update_peserta(id_peserta, payload):
                 return None
 
             # --- Users update ---
+            # ✅ Normalisasi no_hp
+            raw_no_hp = str(payload.get("no_hp", "")).strip() 
+            raw_no_hp = re.sub(r"[^\d+]", "", raw_no_hp)# Hapus semua karakter kecuali angka dan '+'
+            if raw_no_hp.startswith("'"): # Hapus tanda kutip tunggal di depan
+                raw_no_hp = raw_no_hp[1:] 
+            if raw_no_hp.startswith("+62"): # Jika diawali dengan +62 → ganti jadi 0...
+                raw_no_hp = "0" + raw_no_hp[3:] 
+            if raw_no_hp and not raw_no_hp.startswith("0"): # Jika tidak kosong dan tidak diawali dengan 0 → tambahkan 0
+                raw_no_hp = "0" + raw_no_hp
+
             fields_to_update = {
                 "nama": payload.get("nama", old_data["nama"]),
                 "email": payload.get("email", old_data["email"]),
                 "kode_pemulihan": payload.get("kode_pemulihan", old_data["kode_pemulihan"]),
-                "no_hp": payload.get("no_hp", old_data["no_hp"]),
+                "no_hp": raw_no_hp,
                 "updated_at": now,
                 "id_peserta": id_peserta
             }
