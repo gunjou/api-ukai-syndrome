@@ -99,6 +99,22 @@ class MentorModulResource(Resource):
             }, 201
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
+        
+
+@modul_ns.route('/mentor/<int:id_paketkelas>')
+class ModulMentorIDListResource(Resource):
+    # @session_required
+    @role_required('mentor')
+    def get(self, id_paketkelas):
+        """Akses: mentor, Ambil semua modul berdasarkan id_paketkelas"""
+        # id_user = get_jwt_identity()
+        try:
+            result = get_all_modul_by_kelas_mentor(id_paketkelas)
+            if not result:
+                return {"status": "error", "message": "Tidak ada modul ditemukan"}, 404
+            return {"data": result}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
 
 
 @modul_ns.route('/kelas-tersedia/<int:id_modul>')

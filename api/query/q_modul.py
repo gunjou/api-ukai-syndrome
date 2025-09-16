@@ -97,6 +97,24 @@ def get_all_modul_by_mentor(id_mentor):
     except SQLAlchemyError:
         return []
     
+def get_all_modul_by_kelas_mentor(id_paketkelas):
+    engine = get_connection()
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT m.id_modul, m.judul, m.deskripsi, m.owner, m.visibility, m.status,
+                       pk.id_paketkelas, pk.nama_kelas, pk.deskripsi AS deskripsi_kelas
+                FROM modul m
+                JOIN modulkelas mkls ON mkls.id_modul = m.id_modul AND mkls.status = 1
+                JOIN paketkelas pk ON mkls.id_paketkelas = pk.id_paketkelas AND pk.status = 1
+                WHERE pk.id_paketkelas = :id_paketkelas
+                  AND m.status = 1
+                ORDER BY m.id_modul
+            """), {"id_paketkelas": id_paketkelas}).mappings().fetchall()
+            return [dict(row) for row in result]
+    except SQLAlchemyError:
+        return []
+    
 def get_all_kelas_by_modul(id_modul):
     engine = get_connection()
     try:
@@ -104,11 +122,20 @@ def get_all_kelas_by_modul(id_modul):
             query = """
                 SELECT pk.id_paketkelas, pk.nama_kelas, pk.deskripsi,
                        b.id_batch, b.nama_batch, p.id_paket, p.nama_paket,
+                       COALESCE(tmd.total_modul, 0) AS total_modul,
                        COALESCE(tp.total_peserta, 0) AS total_peserta,
                        COALESCE(tm.total_mentor, 0) AS total_mentor
                 FROM paketkelas pk
                 JOIN batch b ON pk.id_batch = b.id_batch AND b.status = 1
                 JOIN paket p ON pk.id_paket = p.id_paket AND p.status = 1
+                LEFT JOIN (
+                    SELECT mk.id_paketkelas, COUNT(mk.*) AS total_modul
+                    FROM modulkelas mk
+                    INNER JOIN modul m ON m.id_modul = mk.id_modul AND m.status = 1
+                    INNER JOIN paketkelas p ON p.id_paketkelas = mk.id_paketkelas AND p.status = 1
+                    WHERE mk.status = 1
+                    GROUP BY mk.id_paketkelas
+                ) tmd ON pk.id_paketkelas = tmd.id_paketkelas
                 LEFT JOIN (
                     SELECT pk.id_paketkelas, COUNT(pk.*) AS total_peserta
                     FROM pesertakelas pk
@@ -156,12 +183,21 @@ def get_kelas_by_modul(id_modul):
             query = """
                 SELECT pk.id_paketkelas, pk.nama_kelas, pk.deskripsi,
                         b.id_batch, b.nama_batch, p.id_paket, p.nama_paket, mkls.id_modulkelas,
+                        COALESCE(tmd.total_modul, 0) AS total_modul,
                         COALESCE(tp.total_peserta, 0) AS total_peserta,
                         COALESCE(tm.total_mentor, 0) AS total_mentor
                 FROM paketkelas pk
                 JOIN batch b ON pk.id_batch = b.id_batch AND b.status = 1
                 JOIN paket p ON pk.id_paket = p.id_paket AND p.status = 1
                 JOIN modulkelas mkls ON mkls.id_paketkelas = pk.id_paketkelas AND mkls.status = 1
+                LEFT JOIN (
+                    SELECT mk.id_paketkelas, COUNT(mk.*) AS total_modul
+                    FROM modulkelas mk
+                    INNER JOIN modul m ON m.id_modul = mk.id_modul AND m.status = 1
+                    INNER JOIN paketkelas p ON p.id_paketkelas = mk.id_paketkelas AND p.status = 1
+                    WHERE mk.status = 1
+                    GROUP BY mk.id_paketkelas
+                ) tmd ON pk.id_paketkelas = tmd.id_paketkelas
                 LEFT JOIN (
                     SELECT pk.id_paketkelas, COUNT(pk.*) AS total_peserta
                     FROM pesertakelas pk

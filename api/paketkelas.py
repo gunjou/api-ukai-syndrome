@@ -74,9 +74,9 @@ class KelasMentorListResource(Resource):
 @kelas_ns.route('/<int:id_kelas>')
 class KelasDetailResource(Resource):
     # @session_required
-    @role_required('admin')
+    @role_required(['admin', 'mentor'])
     def get(self, id_kelas):
-        """Akses: (admin), Ambil detail kelas berdasarkan ID"""
+        """Akses: (admin/mentor), Ambil detail kelas berdasarkan ID"""
         try:
             kelas = get_kelas_by_id(id_kelas)
             if not kelas:

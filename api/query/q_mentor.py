@@ -11,7 +11,8 @@ def get_all_mentor():
             result = connection.execute(text("""
                 SELECT 
                     u.id_user, u.nama, u.email, u.kode_pemulihan, u.password, u.no_hp, u.role,
-                    pk.id_paketkelas, pk.nama_kelas, p.id_paket, p.nama_paket, pk.deskripsi, b.id_batch, b.nama_batch
+                    pk.id_paketkelas, pk.nama_kelas, p.id_paket, p.nama_paket, pk.deskripsi, 
+                    b.id_batch, b.nama_batch
                 FROM users u
                 LEFT JOIN mentorkelas mk 
                     ON u.id_user = mk.id_user AND mk.status = 1
@@ -25,7 +26,41 @@ def get_all_mentor():
                 ORDER BY u.nama ASC;
             """)).mappings().fetchall()
 
-            return [dict(row) for row in result]
+            rows = [dict(row) for row in result]
+            mentors = {}
+
+            for row in rows:
+                uid = row["id_user"]
+                if uid not in mentors:
+                    mentors[uid] = {
+                        "id_user": row["id_user"],
+                        "nama": row["nama"],
+                        "email": row["email"],
+                        "kode_pemulihan": row["kode_pemulihan"],
+                        "password": row["password"],
+                        "no_hp": row["no_hp"],
+                        "role": row["role"],
+                        "total_kelas": 0,
+                        "paketkelas": []  # kumpulan kelas
+                    }
+
+                # Kalau ada kelas yang valid, tambahkan ke list
+                if row["id_paketkelas"]:
+                    mentors[uid]["paketkelas"].append({
+                        "id_paketkelas": row["id_paketkelas"],
+                        "nama_kelas": row["nama_kelas"],
+                        "id_paket": row["id_paket"],
+                        "nama_paket": row["nama_paket"],
+                        "deskripsi": row["deskripsi"],
+                        "id_batch": row["id_batch"],
+                        "nama_batch": row["nama_batch"]
+                    })
+
+            # Hitung total kelas per mentor
+            for mentor in mentors.values():
+                mentor["total_kelas"] = len(mentor["paketkelas"])
+
+            return list(mentors.values())
     except SQLAlchemyError as e:
         print(f"Error occurred: {str(e)}")
         return []
