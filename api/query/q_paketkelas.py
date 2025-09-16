@@ -17,22 +17,28 @@ def get_kelas_by_admin():
                 JOIN batch b ON pk.id_batch = b.id_batch AND b.status = 1
                 JOIN paket p ON pk.id_paket = p.id_paket AND p.status = 1
                 LEFT JOIN (
-                    SELECT id_paketkelas, COUNT(*) AS total_peserta
-                    FROM pesertakelas
-                    WHERE status = 1
-                    GROUP BY id_paketkelas
+                    SELECT pk.id_paketkelas, COUNT(pk.*) AS total_peserta
+                    FROM pesertakelas pk
+                    INNER JOIN paketkelas p ON p.id_paketkelas = pk.id_pesertakelas AND p.status = 1
+                    INNER JOIN users u ON u.id_user = pk.id_user AND u.status = 1 AND u.role = 'peserta'
+                    WHERE p.status = 1
+                    GROUP BY pk.id_paketkelas
                 ) tp ON pk.id_paketkelas = tp.id_paketkelas
                 LEFT JOIN (
-                    SELECT id_paketkelas, COUNT(*) AS total_mentor
-                    FROM mentorkelas
-                    WHERE status = 1
-                    GROUP BY id_paketkelas
+                    SELECT mk.id_paketkelas, COUNT(mk.*) AS total_mentor
+                    FROM mentorkelas mk
+                    INNER JOIN paketkelas p ON p.id_paketkelas = mk.id_paketkelas AND p.status = 1
+                    INNER JOIN users u ON u.id_user = mk.id_user AND u.status = 1 AND u.role = 'mentor'
+                    WHERE mk.status = 1
+                    GROUP BY mk.id_paketkelas
                 ) tm ON pk.id_paketkelas = tm.id_paketkelas
                 LEFT JOIN (
-                    SELECT id_paketkelas, COUNT(*) AS total_modul
-                    FROM modulkelas
-                    WHERE status = 1
-                    GROUP BY id_paketkelas
+                    SELECT mk.id_paketkelas, COUNT(mk.*) AS total_modul
+                    FROM modulkelas mk
+                    INNER JOIN modul m ON m.id_modul = mk.id_modul AND m.status = 1
+                    INNER JOIN paketkelas p ON p.id_paketkelas = mk.id_paketkelas AND p.status = 1
+                    WHERE mk.status = 1
+                    GROUP BY mk.id_paketkelas
                 ) tmd ON pk.id_paketkelas = tmd.id_paketkelas
                 WHERE pk.status = 1
                 ORDER BY pk.nama_kelas ASC

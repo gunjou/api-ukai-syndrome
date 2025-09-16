@@ -110,16 +110,20 @@ def get_all_kelas_by_modul(id_modul):
                 JOIN batch b ON pk.id_batch = b.id_batch AND b.status = 1
                 JOIN paket p ON pk.id_paket = p.id_paket AND p.status = 1
                 LEFT JOIN (
-                    SELECT id_paketkelas, COUNT(*) AS total_peserta
-                    FROM pesertakelas
-                    WHERE status = 1
-                    GROUP BY id_paketkelas
+                    SELECT pk.id_paketkelas, COUNT(pk.*) AS total_peserta
+                    FROM pesertakelas pk
+                    INNER JOIN paketkelas p ON p.id_paketkelas = pk.id_pesertakelas AND p.status = 1
+                    INNER JOIN users u ON u.id_user = pk.id_user AND u.status = 1 AND u.role = 'peserta'
+                    WHERE pk.status = 1
+                    GROUP BY pk.id_paketkelas
                 ) tp ON pk.id_paketkelas = tp.id_paketkelas
                 LEFT JOIN (
-                    SELECT id_paketkelas, COUNT(*) AS total_mentor
-                    FROM mentorkelas
-                    WHERE status = 1
-                    GROUP BY id_paketkelas
+                    SELECT mk.id_paketkelas, COUNT(mk.*) AS total_mentor
+                    FROM mentorkelas mk
+                    INNER JOIN paketkelas p ON p.id_paketkelas = mk.id_paketkelas AND p.status = 1
+                    INNER JOIN users u ON u.id_user = mk.id_user AND u.status = 1 AND u.role = 'mentor'
+                    WHERE mk.status = 1
+                    GROUP BY mk.id_paketkelas
                 ) tm ON pk.id_paketkelas = tm.id_paketkelas
                 WHERE pk.status = 1
                   AND NOT EXISTS (
@@ -159,16 +163,20 @@ def get_kelas_by_modul(id_modul):
                 JOIN paket p ON pk.id_paket = p.id_paket AND p.status = 1
                 JOIN modulkelas mkls ON mkls.id_paketkelas = pk.id_paketkelas AND mkls.status = 1
                 LEFT JOIN (
-                    SELECT id_paketkelas, COUNT(*) AS total_peserta
-                    FROM pesertakelas
-                    WHERE status = 1
-                    GROUP BY id_paketkelas
+                    SELECT pk.id_paketkelas, COUNT(pk.*) AS total_peserta
+                    FROM pesertakelas pk
+                    INNER JOIN paketkelas p ON p.id_paketkelas = pk.id_pesertakelas AND p.status = 1
+                    INNER JOIN users u ON u.id_user = pk.id_user AND u.status = 1 AND u.role = 'peserta'
+                    WHERE pk.status = 1
+                    GROUP BY pk.id_paketkelas
                 ) tp ON pk.id_paketkelas = tp.id_paketkelas
                 LEFT JOIN (
-                    SELECT id_paketkelas, COUNT(*) AS total_mentor
-                    FROM mentorkelas
-                    WHERE status = 1
-                    GROUP BY id_paketkelas
+                    SELECT mk.id_paketkelas, COUNT(mk.*) AS total_mentor
+                    FROM mentorkelas mk
+                    INNER JOIN paketkelas p ON p.id_paketkelas = mk.id_paketkelas AND p.status = 1
+                    INNER JOIN users u ON u.id_user = mk.id_user AND u.status = 1 AND u.role = 'mentor'
+                    WHERE mk.status = 1
+                    GROUP BY mk.id_paketkelas
                 ) tm ON pk.id_paketkelas = tm.id_paketkelas
                 WHERE pk.status = 1 and mkls.id_modul = :id_modul
                 ORDER BY pk.nama_kelas ASC

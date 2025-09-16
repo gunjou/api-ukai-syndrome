@@ -53,7 +53,7 @@ class KelasListResource(Resource):
         
 
 @kelas_ns.route('/mentor')
-class KelasListResource(Resource):
+class KelasMentorListResource(Resource):
     # @session_required
     @jwt_required()
     @role_required('mentor')

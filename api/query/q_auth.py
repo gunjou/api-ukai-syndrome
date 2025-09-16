@@ -122,7 +122,7 @@ def get_login_web(payload):
                     identity=str(user['id_user']),
                     additional_claims={
                         "role": user['role'],
-                        "id_paketkelas": id_paketkelas
+                        # "id_paketkelas": id_paketkelas
                     }
                 )
                 return {
