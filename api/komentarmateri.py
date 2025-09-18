@@ -19,16 +19,15 @@ edit_komentar_model = komentarmateri_ns.model('EditKomentarInput', {
     'isi_komentar': fields.String(required=True, description='Isi komentar yang diperbarui', help="Isi komentar baru"),
 })
 
-@komentarmateri_ns.route('/<int:id_materi>/komentar')
+@komentarmateri_ns.route('/<int:id_materi>/komentar/<int:id_paketkelas>')
 class KomentarMateriResource(Resource):
     @session_required
     @jwt_required()
     @role_required(['mentor', 'peserta'])
-    def get(self, id_materi):
+    def get(self, id_materi, id_paketkelas):
         """Akses: (mentor/peserta), Ambil komentar materi sesuai hak akses kelas"""
         current_user_id = get_jwt_identity()
         current_role = get_jwt()['role']
-        id_paketkelas = get_jwt()['id_paketkelas']
         print(f'current_kelas: {id_paketkelas}, current_role: {current_role}')
 
         if not is_user_have_access_to_materi(current_user_id, id_materi, current_role, id_paketkelas):
@@ -41,14 +40,13 @@ class KomentarMateriResource(Resource):
     @session_required
     @jwt_required()
     @role_required(['mentor', 'peserta'])
-    def post(self, id_materi):
+    def post(self, id_materi, id_paketkelas):
         """Akses: (mentor/peserta), Tambah komentar baru atau balasan komentar"""
         args = komentar_post_parser.parse_args()
         isi_komentar = args.get("isi_komentar")
         parent_id = args.get("parent_id")
         current_user_id = get_jwt_identity()
         current_role = get_jwt()['role']
-        id_paketkelas = get_jwt()['id_paketkelas']
 
         if not is_user_have_access_to_materi(current_user_id, id_materi, current_role, id_paketkelas):
             return {"status": "error", "message": "Akses ditolak."}, 403
