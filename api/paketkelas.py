@@ -126,3 +126,88 @@ class KelasDetailResource(Resource):
             return {"status": f"Kelas '{deleted['nama_kelas']}' berhasil dihapus"}, 200
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
+
+
+@kelas_ns.route("/peserta/<int:id_kelas>")
+class ListPesertaKelasResource(Resource):
+    @role_required('admin')
+    def get(self, id_kelas):
+        """Akses: (admin), Ambil semua peserta aktif suatu batch"""
+        try:
+            result = get_peserta_kelas(id_kelas)
+            if not result:
+                return {"status": "error", "message": "Tidak ada peserta ditemukan"}, 404
+            return {"respon": 200, "total_peserta":len (result), "data": result}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+
+
+@kelas_ns.route("/mentor/<int:id_kelas>")
+class ListMentorKelasResource(Resource):
+    @role_required('admin')
+    def get(self, id_kelas):
+        """Akses: (admin), Ambil semua mentor aktif suatu batch"""
+        try:
+            result = get_mentor_kelas(id_kelas)
+            if not result:
+                return {"status": "error", "message": "Tidak ada mentor ditemukan"}, 404
+            return {"respon": 200, "total_mentor":len (result), "data": result}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+
+
+@kelas_ns.route("/modul/<int:id_modul>")
+class ListModulKelasResource(Resource):
+    @role_required('admin')
+    def get(self, id_modul):
+        """Akses: (admin), Ambil semua modul aktif suatu batch"""
+        try:
+            result = get_modul_kelas(id_modul)
+            if not result:
+                return {"status": "error", "message": "Tidak ada modul ditemukan"}, 404
+            return {"respon": 200, "total_modul":len (result), "data": result}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+        
+
+@kelas_ns.route('/peserta/<int:id_pesertakelas>')
+class DeletePesertaBatchResource(Resource):
+    @role_required('admin')
+    def delete(self, id_pesertakelas):
+        """Akses: (admin), Delete peserta yang terdaftar di kelas"""
+        try:
+            success = soft_delete("pesertakelas", "id_pesertakelas", id_pesertakelas)
+            if not success:
+                return {"status": "error", "message": "Gagal menghapus peserta"}, 400
+            return {"status": "Peserta untuk kelas ini berhasil dihapus"}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+        
+
+@kelas_ns.route('/mentor/<int:id_mentorkelas>')
+class DeletePesertaBatchResource(Resource):
+    @role_required('admin')
+    def delete(self, id_mentorkelas):
+        """Akses: (admin), Delete mentor yang terdaftar di kelas"""
+        try:
+            success = soft_delete("mentorkelas", "id_mentorkelas", id_mentorkelas)
+            if not success:
+                return {"status": "error", "message": "Gagal menghapus mentor"}, 400
+            return {"status": "Mentor untuk kelas ini berhasil dihapus"}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+        
+
+@kelas_ns.route('/modul/<int:id_modulkelas>')
+class DeletePesertaBatchResource(Resource):
+    @role_required('admin')
+    def delete(self, id_modulkelas):
+        """Akses: (admin), Delete modul yang terdaftar di kelas"""
+        try:
+            success = soft_delete("modulkelas", "id_modulkelas", id_modulkelas)
+            if not success:
+                return {"status": "error", "message": "Gagal menghapus moduul"}, 400
+            return {"status": "Modul untuk kelas ini berhasil dihapus"}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+        

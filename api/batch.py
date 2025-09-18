@@ -113,3 +113,29 @@ class BatchTerbukaResource(Resource):
             return {"status": "success", "data": result}, 200
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
+        
+@batch_ns.route("/peserta/<int:id_batch>")
+class BatchPesertaResource(Resource):
+    @role_required('admin')
+    def get(self, id_batch):
+        """Akses: (admin), Ambil semua peserta aktif suatu batch"""
+        try:
+            result = get_peserta_batch(id_batch)
+            if not result:
+                return {"status": "error", "message": "Tidak ada peserta ditemukan"}, 404
+            return {"respon": 200, "total_peserta":len (result), "data": result}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+        
+@batch_ns.route('/peserta/<int:id_userbatch>')
+class DeletePesertaBatchResource(Resource):
+    @role_required('admin')
+    def delete(self, id_userbatch):
+        """Akses: (admin), Delete peserta yang terdaftar di batch"""
+        try:
+            success = delete_peserta_in_batch(id_userbatch)
+            if not success:
+                return {"status": "error", "message": "Gagal menghapus peserta"}, 400
+            return {"status": "Peserta untuk batch ini berhasil dihapus"}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500

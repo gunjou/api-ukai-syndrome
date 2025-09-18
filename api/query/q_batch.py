@@ -10,19 +10,25 @@ def get_all_batch():
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT b.id_batch,
-                       b.nama_batch,
-                       b.tanggal_mulai,
-                       b.tanggal_selesai,
-                       COUNT(ub.id_userbatch) AS total_peserta
+                SELECT 
+                    b.id_batch,
+                    b.nama_batch,
+                    b.tanggal_mulai,
+                    b.tanggal_selesai,
+                    COUNT(u.id_user) AS total_peserta
                 FROM batch b
                 LEFT JOIN userbatch ub 
-                       ON ub.id_batch = b.id_batch
-                      AND ub.status = 1
+                    ON ub.id_batch = b.id_batch 
+                   AND ub.status = 1
+                LEFT JOIN users u 
+                    ON u.id_user = ub.id_user 
+                   AND u.role = 'peserta' 
+                   AND u.status = 1
                 WHERE b.status = 1
                 GROUP BY b.id_batch, b.nama_batch, b.tanggal_mulai, b.tanggal_selesai
                 ORDER BY b.tanggal_mulai ASC
             """)).mappings().fetchall()
+
             return [serialize_row(row) for row in result]
     except SQLAlchemyError as e:
         print(f"Error: {e}")
@@ -119,3 +125,37 @@ def get_batch_terbuka():
     except SQLAlchemyError as e:
         print(f"[get_batch_terbuka] Error: {str(e)}")
         return []
+
+def get_peserta_batch(id_batch):
+    engine = get_connection()
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT 
+                    u.id_user, u.nama, u.email, u.no_hp, ub.id_userbatch, ub.tanggal_join
+                FROM userbatch ub
+                JOIN users u  ON ub.id_user = u.id_user AND u.role = 'peserta' AND u.status = 1
+                WHERE ub.status = 1 AND ub.id_batch = :id_batch
+                ORDER BY u.nama ASC
+            """), {"id_batch": id_batch}).mappings().fetchall()
+
+            return [serialize_row(row) for row in result]
+    except SQLAlchemyError as e:
+        print(f"Error get_peserta_batch: {e}")
+        return []
+
+def delete_peserta_in_batch(id_userbatch):
+    engine = get_connection()
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text("""
+                UPDATE userbatch
+                SET status = 0, updated_at = :now
+                WHERE id_userbatch = :id AND status = 1
+            """), {
+                "id": id_userbatch,
+                "now": get_wita()
+            })
+            return result.rowcount > 0  # True kalau ada row ter-update
+    except SQLAlchemyError:
+        return False
