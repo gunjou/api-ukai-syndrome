@@ -82,6 +82,37 @@ class PesertaListResource(Resource):
             return {'status': "Internal server error"}, 500
 
 
+@peserta_ns.route('/aktif')
+class PesertaAktifListResource(Resource):
+    # @session_required
+    @role_required('admin')
+    def get(self):
+        """Akses: (admin), Mengambil list semua peserta aktif"""
+        try:
+            result = get_all_peserta_aktif()
+            if not result:
+                return {'status': 'error', 'message': 'Tidak ada peserta ditemukan'}, 404
+            return result, 200
+        except SQLAlchemyError as e:
+            logging.error(f"Database error: {str(e)}")
+            return {'status': "Internal server error"}, 500
+        
+@peserta_ns.route('/public')
+class PenggunaListResource(Resource):
+    # @session_required
+    @role_required('admin')
+    def get(self):
+        """Akses: (admin), Mengambil list semua peserta public"""
+        try:
+            result = get_all_peserta_public()
+            if not result:
+                return {'status': 'error', 'message': 'Tidak ada peserta ditemukan'}, 404
+            return result, 200
+        except SQLAlchemyError as e:
+            logging.error(f"Database error: {str(e)}")
+            return {'status': "Internal server error"}, 500
+        
+
 @peserta_ns.route('/template')
 class DownloadPesertaTemplateResource(Resource):
     @peserta_ns.produces(["text/csv"])
@@ -114,7 +145,7 @@ class UploadPesertaResource(Resource):
         try:
             # Load file
             if file.filename.endswith(".csv"):
-                df = pd.read_csv(file)
+                df = pd.read_csv(file, sep=';')
             elif file.filename.endswith(".xlsx"):
                 df = pd.read_excel(file)
             else:
