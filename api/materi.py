@@ -135,7 +135,7 @@ class MateriMentorResource(Resource):
             result = get_materi_by_mentor(id_user)
             if not result:
                 return {"status": "error", "data": [], "message": "Tidak ada materi yang tersedia"}, 200
-            return {"status": "success", "data": result}, 200
+            return {"status": "success", "total": len(result), "data": result}, 200
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
         
@@ -157,6 +157,24 @@ class MateriMentorResource(Resource):
             return {"status": f"Materi '{created['judul']}' berhasil ditambahkan", "data": created}, 201
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
+        
+
+@materi_ns.route('/mentor/<int:id_paketdata>')
+class MateriMentorInKelasResource(Resource):
+    # @session_required
+    @jwt_required()
+    @role_required('mentor')
+    def get(self, id_paketdata):
+        """Akses: (mentor) Melihat materi yang tersedia untuk mentor"""
+        id_user = get_jwt_identity()
+        try:
+            result = get_materi_by_mentor_and_kelas(id_user, id_paketdata)
+            if not result:
+                return {"status": "error", "data": [], "message": "Tidak ada materi yang tersedia"}, 200
+            return {"status": "success", "total": len(result), "data": result}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+        
         
 @materi_ns.route('/<int:id_materi>/visibility')
 class MateriVisibilityResource(Resource):

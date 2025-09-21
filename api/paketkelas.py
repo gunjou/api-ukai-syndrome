@@ -5,7 +5,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from .query.q_paketkelas import *
 from .utils.decorator import role_required, session_required
 
-kelas_ns = Namespace("kelas", description="Manajemen paket kelas")
+kelas_ns = Namespace("paketkelas", description="Manajemen paket kelas")
 
 kelas_model = kelas_ns.model("Kelas", {
     "id_batch": fields.Integer(required=True, description="ID batch"),
