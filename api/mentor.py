@@ -129,3 +129,18 @@ class MentorDetailResource(Resource):
         except SQLAlchemyError as e:
             logging.error(f"Database error: {str(e)}")
             return {'status': "Internal server error"}, 500
+
+
+@mentor_ns.route('/bio-mentor')
+class MentorSimpleResource(Resource):
+    @role_required('admin')
+    def get(self):
+        """Akses: (admin), Mengambil list biodata semua mentor"""
+        try:
+            result = get_bio_all_mentor()
+            if not result:
+                return {'status': 'error', 'message': 'Tidak ada mentor yang ditemukan'}, 404
+            return {"respon": 200, "total_mentor":len (result), "data": result}, 200
+        except SQLAlchemyError as e:
+            logging.error(f"Database error: {str(e)}")
+            return {'status': "Internal server error"}, 500

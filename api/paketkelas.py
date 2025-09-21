@@ -58,11 +58,29 @@ class KelasMentorListResource(Resource):
     @jwt_required()
     @role_required('mentor')
     def get(self):
-        """Akses: (admin, mentor), Ambil semua kelas aktif untuk admin, dan yang diampu oleh mentor"""
+        """Akses: (mentor), Ambil semua kelas aktif yang diampu oleh mentor"""
         try:
             current_user_id = get_jwt_identity()
 
             result = get_kelas_by_mentor(current_user_id)
+
+            if not result:
+                return {"status": "error", "message": "Tidak ada kelas ditemukan"}, 404
+            return {"data": result}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+
+@kelas_ns.route('/wali-kelas')
+class KelasWaliKelasListResource(Resource):
+    # @session_required
+    @jwt_required()
+    @role_required('mentor')
+    def get(self):
+        """Akses: (mentor), Ambil semua kelas dimana sesuai wali kelasnya"""
+        try:
+            current_user_id = get_jwt_identity()
+
+            result = get_kelas_by_walikelas(current_user_id)
 
             if not result:
                 return {"status": "error", "message": "Tidak ada kelas ditemukan"}, 404
@@ -102,6 +120,7 @@ class KelasDetailResource(Resource):
         updated_payload = {
             "id_batch": data.get("id_batch", old["id_batch"]),
             "id_paket": data.get("id_paket", old["id_paket"]),
+            "id_user": data.get("id_user", old["id_user"]), # id_walikelas
             "nama_kelas": data.get("nama_kelas", old["nama_kelas"]),
             "deskripsi": data.get("deskripsi", old["deskripsi"])
         }

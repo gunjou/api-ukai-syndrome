@@ -288,3 +288,18 @@ def delete_mentor(id_mentor):
         print(f"Error delete_mentor: {e}")
         return None
 
+
+def get_bio_all_mentor():
+    engine = get_connection()
+    try:
+        with engine.connect() as connection:
+            result = connection.execute(text("""
+                SELECT id_user, nama, email, role, kode_pemulihan
+                FROM users
+                WHERE role = 'mentor' AND status = 1
+                ORDER BY nama ASC;
+            """)).mappings().fetchall()
+            return [dict(row) for row in result]
+    except SQLAlchemyError as e:
+        print(f"Error occurred: {str(e)}")
+        return None
