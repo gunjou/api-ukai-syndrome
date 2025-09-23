@@ -471,4 +471,22 @@ def delete_peserta(id_peserta):
     except SQLAlchemyError as e:
         print(f"[ERROR delete_peserta] {e}")
         return None
+    
+def reset_password_peserta(id_peserta):
+    engine = get_connection()
+    try:
+        password_default = generate_password_hash("123456", method="pbkdf2:sha256")
+        with engine.begin() as conn:
+            conn.execute(text("""
+                UPDATE users
+                SET password = :password_default, updated_at = :now
+                WHERE id_user = :id_peserta AND status = 1
+            """), {
+                "id_peserta": id_peserta,
+                "password_default": password_default,
+                "now": get_wita()
+            })
+            return True
+    except SQLAlchemyError:
+        return False
 

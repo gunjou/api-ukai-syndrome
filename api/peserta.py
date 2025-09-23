@@ -233,3 +233,18 @@ class PesertaDetailResource(Resource):
         except SQLAlchemyError as e:
             logging.error(f"Database error: {str(e)}")
             return {'status': "Internal server error"}, 500
+
+
+@peserta_ns.route('/reset-password/<int:id_peserta>')
+class PesertaResetPasswordResource(Resource):
+    # @session_required
+    @role_required('admin')
+    def put(self, id_peserta):
+        """Akses: (admin), Reset password peserta ke default berdasarkan ID"""
+        try:
+            success = reset_password_peserta(id_peserta)
+            if not success:
+                return {"status": "error", "message": "Gagal reset password peserta"}, 400
+            return {"status": "success", "message": "Password peserta telah di-reset"}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
