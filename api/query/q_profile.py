@@ -15,7 +15,7 @@ def get_user_by_id(user_id):
         """), {"id_user": user_id}).mappings().fetchone()
         return dict(result) if result else None
     
-def update_profile(id_user, nama=None, no_hp=None):
+def update_profile(id_user, nama=None, email=None, no_hp=None):
     engine = get_connection()
     try:
         with engine.begin() as conn:
@@ -25,6 +25,9 @@ def update_profile(id_user, nama=None, no_hp=None):
             if nama:
                 fields_to_update.append("nama = :nama")
                 params["nama"] = nama
+            if email:
+                fields_to_update.append("email = :email")
+                params["email"] = email
             if no_hp:
                 fields_to_update.append("no_hp = :no_hp")
                 params["no_hp"] = no_hp

@@ -1,6 +1,7 @@
 from flask import request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from flask_restx import Namespace, Resource, fields
+from email_validator import validate_email, EmailNotValidError
 from sqlalchemy.exc import SQLAlchemyError
 
 from .utils.decorator import session_required
@@ -43,11 +44,18 @@ class UpdateProfileResource(Resource):
         nama = payload.get("nama")
         no_hp = payload.get("no_hp")
 
+        # Validasi email
+        try:
+            valid = validate_email(payload.get("email", ""), check_deliverability=False)
+            email = valid.email.lower()
+        except EmailNotValidError as e:
+            return {"status": "error", "message": str(e)}, 400
+
         # Validasi minimal ada 1 field
         if not nama and not no_hp:
             return {"status": "error", "message": "Minimal salah satu field harus diisi"}, 400
 
-        result, status_code = update_profile(id_user, nama, no_hp)
+        result, status_code = update_profile(id_user, nama, email, no_hp)
         return result, status_code
     
 
