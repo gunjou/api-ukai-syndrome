@@ -120,11 +120,12 @@ def get_all_materi():
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT m.id_materi, m.id_modul, m.tipe_materi, m.judul, m.url_file,
+                SELECT m.id_materi, m.id_owner, u.nickname as owner, m.id_modul, m.tipe_materi, m.judul, m.url_file,
                        m.visibility, m.status, m.created_at, m.updated_at,
                        mo.judul AS judul_modul
                 FROM materi m
-                JOIN modul mo ON m.id_modul = mo.id_modul
+                JOIN modul mo ON m.id_modul = mo.id_modul AND mo.status = 1
+                LEFT JOIN users u ON m.id_owner = u.id_user AND u.status = 1
                 WHERE m.status = 1
                 ORDER BY m.created_at DESC
             """)).mappings().fetchall()
@@ -153,11 +154,11 @@ def get_materi_by_id(id_materi):
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT m.id_materi, m.id_modul, m.tipe_materi, m.judul, m.url_file,
+                SELECT m.id_materi, m.id_owner, m.id_modul, m.tipe_materi, m.judul, m.url_file,
                        m.visibility, m.status, m.created_at, m.updated_at,
                        mo.judul AS judul_modul
                 FROM materi m
-                JOIN modul mo ON m.id_modul = mo.id_modul
+                JOIN modul mo ON m.id_modul = mo.id_modul AND mo.status = 1
                 WHERE m.id_materi = :id AND m.status = 1
             """), {"id": id_materi}).mappings().fetchone()
             return serialize_row(result) if result else None
@@ -171,8 +172,8 @@ def insert_materi(payload):
         with engine.begin() as conn:
             now = get_wita()
             result = conn.execute(text("""
-                INSERT INTO materi (id_modul, tipe_materi, judul, url_file, status, created_at, updated_at)
-                VALUES (:id_modul, :tipe_materi, :judul, :url_file, 1, :now, :now)
+                INSERT INTO materi (id_modul, id_owner, tipe_materi, judul, url_file, status, created_at, updated_at)
+                VALUES (:id_modul, :id_owner, :tipe_materi, :judul, :url_file, 1, :now, :now)
                 RETURNING id_materi, judul
             """), {**payload, "now": now}).mappings().fetchone()
             return dict(result)
@@ -187,6 +188,7 @@ def update_materi(id_materi, payload):
             result = conn.execute(text("""
                 UPDATE materi
                 SET id_modul = :id_modul,
+                    id_owner = :id_owner,
                     tipe_materi = :tipe_materi,
                     judul = :judul,
                     url_file = :url_file,

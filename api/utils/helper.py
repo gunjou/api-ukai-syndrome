@@ -40,3 +40,32 @@ def get_project_root():
 
 def get_sample_file(filename):
     return os.path.join(get_project_root(), "template_files", filename)
+
+from datetime import datetime
+
+def generate_judul(payload):
+    # Format tanggal ke dd Mon yy (misal 26 Agu 25)
+    tanggal_obj = datetime.strptime(payload["tanggal"], "%Y-%m-%d")
+    tanggal_str = tanggal_obj.strftime("%d %b %y")  # ex: "26 Aug 25"
+    tanggal_str = tanggal_str.replace("Aug", "Agu")  # lokalize kalau perlu
+    
+    nickname = payload["nickname_mentor"]
+    modul = payload["nama_modul"]
+
+    # default akhir judul kosong
+    suffix = ""
+
+    if payload["tipe_materi"] == "document":
+        suffix = ""  # tidak ada tambahan
+    elif payload["tipe_materi"] == "video":
+        tipe_video = payload.get("tipe_video")
+        if tipe_video == "full":
+            suffix = ""  # sama seperti document
+        elif tipe_video and tipe_video.startswith("part"):
+            suffix = f"_{tipe_video}"  # misal: part_1, part_2
+        elif tipe_video == "terjeda":
+            time_str = payload.get("time")
+            suffix = f"_part_{time_str}" if time_str else ""
+    
+    judul = f"{tanggal_str}_{nickname}_{modul}{suffix}"
+    return judul

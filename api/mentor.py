@@ -100,6 +100,7 @@ class MentorDetailResource(Resource):
 
         updated_payload = {
             "nama": data.get("nama", old_mentor["nama"]),
+            "nickname": data.get("nickname", old_mentor["nickname"]),
             "email": data.get("email", old_mentor["email"]),
             "password": data.get("password", ""),
             "no_hp": data.get("no_hp", old_mentor.get("no_hp")),

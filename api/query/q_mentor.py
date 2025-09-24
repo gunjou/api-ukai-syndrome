@@ -10,7 +10,7 @@ def get_all_mentor():
         with engine.connect() as connection:
             result = connection.execute(text("""
                 SELECT 
-                    u.id_user, u.nama, u.email, u.kode_pemulihan, u.password, u.no_hp, u.role,
+                    u.id_user, u.nama, u.nickname, u.email, u.kode_pemulihan, u.password, u.no_hp, u.role,
                     pk.id_paketkelas, pk.nama_kelas, p.id_paket, p.nama_paket, pk.deskripsi, 
                     b.id_batch, b.nama_batch
                 FROM users u
@@ -35,6 +35,7 @@ def get_all_mentor():
                     mentors[uid] = {
                         "id_user": row["id_user"],
                         "nama": row["nama"],
+                        "nickname": row["nickname"],
                         "email": row["email"],
                         "kode_pemulihan": row["kode_pemulihan"],
                         "password": row["password"],
@@ -108,8 +109,8 @@ def insert_mentor(payload):
 
             # ✅ Insert ke users
             user_result = connection.execute(text("""
-                INSERT INTO users (nama, email, password, kode_pemulihan, role, status, created_at, updated_at, no_hp)
-                VALUES (:nama, :email, :hash_password, :kode_pemulihan, 'mentor', 1, :now, :now, :no_hp)
+                INSERT INTO users (nama, nickname, email, password, kode_pemulihan, role, status, created_at, updated_at, no_hp)
+                VALUES (:nama, :nickname, :email, :hash_password, :kode_pemulihan, 'mentor', 1, :now, :now, :no_hp)
                 RETURNING id_user, nama, email
             """), {
                 **payload,
@@ -150,7 +151,7 @@ def get_mentor_by_id(id_mentor):
     try:
         with engine.connect() as connection:
             result = connection.execute(text("""
-                SELECT id_user, nama, email, role, kode_pemulihan
+                SELECT id_user, nickname, nama, email, role, kode_pemulihan
                 FROM users
                 WHERE id_user = :id_mentor AND role = 'mentor' AND status = 1;
             """), {'id_mentor': id_mentor}).mappings().fetchone()
@@ -178,6 +179,7 @@ def update_mentor(id_mentor, payload):
             # --- Update data di users ---
             fields_to_update = {
                 "nama": payload["nama"],
+                "nickname": payload["nickname"],
                 "email": payload["email"],
                 "no_hp": raw_no_hp if payload.get("no_hp") != "" else None,
                 "kode_pemulihan": payload["kode_pemulihan"],
@@ -188,7 +190,7 @@ def update_mentor(id_mentor, payload):
                 fields_to_update["password"] = generate_password_hash(payload["password"], method='pbkdf2:sha256')
                 query_user = text("""
                     UPDATE users
-                    SET nama = :nama, email = :email, no_hp = :no_hp,
+                    SET nama = :nama, nickname = :nickname, email = :email, no_hp = :no_hp,
                         password = :password, kode_pemulihan = :kode_pemulihan, 
                         updated_at = :updated_at
                     WHERE id_user = :id_mentor AND role = 'mentor' AND status = 1
@@ -197,7 +199,7 @@ def update_mentor(id_mentor, payload):
             else:
                 query_user = text("""
                     UPDATE users
-                    SET nama = :nama, email = :email, no_hp = :no_hp,
+                    SET nama = :nama, nickname = :nickname, email = :email, no_hp = :no_hp,
                         kode_pemulihan = :kode_pemulihan, updated_at = :updated_at
                     WHERE id_user = :id_mentor AND role = 'mentor' AND status = 1
                     RETURNING id_user, nama;
@@ -294,7 +296,7 @@ def get_bio_all_mentor():
     try:
         with engine.connect() as connection:
             result = connection.execute(text("""
-                SELECT id_user, nama, email, role, kode_pemulihan
+                SELECT id_user, nickname, nama, email, role, kode_pemulihan
                 FROM users
                 WHERE role = 'mentor' AND status = 1
                 ORDER BY nama ASC;

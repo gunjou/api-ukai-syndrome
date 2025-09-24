@@ -57,7 +57,7 @@ def get_login_web(payload):
             # 🔎 Ambil data user dulu (tanpa join ke kelas)
             user = connection.execute(
                 text("""
-                    SELECT u.id_user, u.nama, u.email, u.password, u.kode_pemulihan, u.role, u.status
+                    SELECT u.id_user, u.nama, u.nickname, u.email, u.password, u.kode_pemulihan, u.role, u.status
                     FROM users u
                     WHERE u.email = :email
                     AND u.status = 1
@@ -131,6 +131,7 @@ def get_login_web(payload):
                     'message': 'login success',
                     'id_user': user['id_user'],
                     'nama': user['nama'],
+                    'nickname': user['nickname'],
                     'email': user['email'],
                     'role': user['role'],
                     'id_paketkelas': id_paketkelas,
@@ -213,7 +214,7 @@ def get_login_mobile(payload):
             # 🔎 Ambil data user dulu (tanpa join ke kelas)
             user = connection.execute(
                 text("""
-                    SELECT u.id_user, u.nama, u.email, u.password, u.role, u.status
+                    SELECT u.id_user, u.nama, u.nickname, u.email, u.password, u.role, u.status
                     FROM users u
                     WHERE u.email = :email
                       AND u.status = 1
@@ -331,6 +332,7 @@ def get_login_mobile(payload):
                 'message': 'login success',
                 'id_user': user['id_user'],
                 'nama': user['nama'],
+                "nickname": user['nickname'],
                 'email': user['email'],
                 'role': user['role'],
                 'id_paketkelas': id_paketkelas,
