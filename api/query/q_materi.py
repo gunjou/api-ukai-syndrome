@@ -172,8 +172,8 @@ def insert_materi(payload):
         with engine.begin() as conn:
             now = get_wita()
             result = conn.execute(text("""
-                INSERT INTO materi (id_modul, id_owner, tipe_materi, judul, url_file, status, created_at, updated_at)
-                VALUES (:id_modul, :id_owner, :tipe_materi, :judul, :url_file, 1, :now, :now)
+                INSERT INTO materi (id_modul, id_owner, tipe_materi, judul, url_file, visibility, status, created_at, updated_at)
+                VALUES (:id_modul, :id_owner, :tipe_materi, :judul, :url_file, :visibility, 1, :now, :now)
                 RETURNING id_materi, judul
             """), {**payload, "now": now}).mappings().fetchone()
             return dict(result)
