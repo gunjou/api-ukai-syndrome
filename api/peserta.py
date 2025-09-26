@@ -114,7 +114,13 @@ class UploadPesertaResource(Resource):
         try:
             # Load file
             if file.filename.endswith(".csv"):
-                df = pd.read_csv(file, sep=';')
+                try:
+                    try:
+                        df = pd.read_csv(file, sep=',')
+                    except:
+                        df = pd.read_csv(file, sep=';')
+                except:
+                    df = pd.read_csv(file, sep=";", encoding='cp1252')
             elif file.filename.endswith(".xlsx"):
                 df = pd.read_excel(file)
             else:
