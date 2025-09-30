@@ -107,7 +107,7 @@ def get_kelas_by_walikelas(id_user):
                 JOIN batch b ON pk.id_batch = b.id_batch AND b.status = 1
                 JOIN paket p ON pk.id_paket = p.id_paket AND p.status = 1
                 LEFT JOIN users u ON pk.id_user = u.id_user AND u.status = 1 AND u.role = 'mentor'
-                WHERE pk.id_user = 111 AND pk.status = 1
+                WHERE pk.id_user = :id_user AND pk.status = 1
                 ORDER BY pk.nama_kelas ASC
             """
             result = conn.execute(text(query), {"id_user": id_user}).mappings().fetchall()
