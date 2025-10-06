@@ -56,8 +56,6 @@ def get_all_peserta():
     except SQLAlchemyError as e:
         print(f"Error occurred: {str(e)}")
         return []
-
-
 # def insert_peserta(payload):
 #     engine = get_connection()
 #     try:
@@ -88,7 +86,7 @@ def insert_peserta_with_batch_kelas(payload):
 
             # 1️⃣ Cek apakah email sudah ada di users
             user = conn.execute(
-                text("SELECT id_user, nama FROM users WHERE email = :email"),
+                text("SELECT id_user, nama FROM users WHERE email = :email AND status = 1"),
                 {"email": email}
             ).mappings().fetchone()
 
