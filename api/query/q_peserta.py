@@ -15,23 +15,9 @@ def get_all_peserta():
         with engine.connect() as connection:
             result = connection.execute(text("""
                 SELECT 
-                    u.id_user,
-                    u.nama,
-                    u.email,
-                    u.no_hp,
-                    u.password,
-                    u.kode_pemulihan,
-                    u.role,
-                    b.nama_batch,
-                    b.tanggal_mulai,
-                    b.tanggal_selesai,
-                    ub.tanggal_join,
-                    ub.status_enroll,
-                    pk.nama_kelas,
-                    pk.id_paketkelas,
-                    pk.id_batch,
-                    p.id_paket,
-                    p.nama_paket
+                    u.id_user, u.nama, u.email, u.no_hp, u.password, u.kode_pemulihan, u.role,
+                    b.nama_batch, b.tanggal_mulai, b.tanggal_selesai, ub.tanggal_join, ub.status_enroll,
+                    pk.nama_kelas, pk.id_paketkelas, pk.id_batch, p.id_paket, p.nama_paket
                 FROM users u
                 LEFT JOIN userbatch ub 
                     ON ub.id_user = u.id_user 
@@ -56,20 +42,61 @@ def get_all_peserta():
     except SQLAlchemyError as e:
         print(f"Error occurred: {str(e)}")
         return []
-# def insert_peserta(payload):
-#     engine = get_connection()
-#     try:
-#         with engine.begin() as connection:
-#             payload['hash_password'] = generate_password_hash(payload['password'], method='pbkdf2:sha256')
-#             result = connection.execute(text("""
-#                 INSERT INTO users (nama, email, password, kode_pemulihan, role, status, created_at, updated_at)
-#                 VALUES (:nama, :email, :hash_password, :kode_pemulihan, 'peserta', 1, :timestamp_wita, :timestamp_wita)
-#                 RETURNING nama
-#             """), {**payload, "timestamp_wita": get_wita()}).mappings().fetchone()
-#             return dict(result)
-#     except SQLAlchemyError as e:
-#         print(f"Error occurred: {str(e)}")
-#         return None
+    
+def get_all_peserta_aktif():
+    engine = get_connection()
+    try:
+        with engine.connect() as connection:
+            result = connection.execute(text("""
+                SELECT 
+                    u.id_user, u.nama, u.email, u.no_hp, u.password, u.kode_pemulihan, u.role,
+                    b.nama_batch, b.tanggal_mulai, b.tanggal_selesai, ub.tanggal_join, ub.status_enroll,
+                    pk.nama_kelas, pk.id_paketkelas, pk.id_batch, p.id_paket, p.nama_paket
+                FROM users u
+                LEFT JOIN userbatch ub 
+                    ON ub.id_user = u.id_user 
+                    AND ub.status = 1
+                LEFT JOIN batch b 
+                    ON b.id_batch = ub.id_batch 
+                   AND b.status = 1
+                LEFT JOIN pesertakelas pkls 
+                    ON pkls.id_user = u.id_user 
+                   AND pkls.status = 1
+                LEFT JOIN paketkelas pk 
+                    ON pk.id_paketkelas = pkls.id_paketkelas 
+                   AND pk.status = 1
+                LEFT JOIN paket p 
+                    ON p.id_paket = pk.id_paket AND p.status = 1
+                WHERE u.role = 'peserta'
+                  AND u.status = 1
+                  AND u.nama IS NOT NULL
+                  AND b.id_batch IS NOT NULL;
+            """)).mappings().fetchall()
+
+            return [serialize_row(row) for row in result]
+    except SQLAlchemyError as e:
+        print(f"Error occurred: {str(e)}")
+        return []
+
+def get_all_peserta_public():
+    engine = get_connection()
+    try:
+        with engine.connect() as connection:
+            result = connection.execute(text("""
+                SELECT 
+                    u.id_user, u.nama, u.email, u.no_hp, u.password, u.kode_pemulihan, u.role
+                FROM users u
+                LEFT JOIN userbatch ub 
+                ON ub.id_user = u.id_user AND ub.status = 1
+                WHERE u.role = 'peserta'
+                AND ub.id_user IS NULL
+                AND u.status = 1;
+            """)).mappings().fetchall()
+
+            return [serialize_row(row) for row in result]
+    except SQLAlchemyError as e:
+        print(f"Error occurred: {str(e)}")
+        return []
 
 def insert_peserta_with_batch_kelas(payload):
     engine = get_connection()
