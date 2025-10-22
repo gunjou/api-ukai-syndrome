@@ -23,7 +23,7 @@ assign_class_parser.add_argument('id_paketkelas', type=int, action='append', req
 
 @tryout_ns.route('/list')
 class TryoutListResource(Resource):
-    @session_required
+    # @session_required
     @jwt_required()
     @role_required(['mentor', 'peserta'])
     def get(self):
@@ -49,8 +49,8 @@ class AdminTryoutListResource(Resource):
         id_batch = request.args.get('id_batch', type=int)
         id_paketkelas = request.args.get('id_paketkelas', type=int)
 
-        if not id_batch and not id_paketkelas:
-            return {"message": "Minimal salah satu dari id_batch atau id_paketkelas harus diisi"}, 400
+        # if not id_batch and not id_paketkelas:
+        #     return {"message": "Minimal salah satu dari id_batch atau id_paketkelas harus diisi"}, 400
 
         # (Opsional) Validasi id_batch dan id_paketkelas benar-benar ada di DB
         if id_batch and not is_valid_batch(id_batch):
