@@ -65,9 +65,9 @@ class UploadSoalTryoutResource(Resource):
         try:
             # Load file
             if file.filename.endswith(".csv"):
-                df = pd.read_csv(file)
+                df = pd.read_csv(file, sep=',', quotechar='"', skipinitialspace=True)
             elif file.filename.endswith(".xlsx"):
-                df = pd.read_excel(file)
+                df = pd.read_csv(file, sep=',', quotechar='"', skipinitialspace=True)
             else:
                 return {"message": "Format file harus .csv atau .xlsx"}, 400
 

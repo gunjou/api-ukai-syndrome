@@ -65,13 +65,17 @@ authorizations = {
 
 # Swagger API instance
 restx_api = Api(
-    api, 
-    version="1.0", 
-    title="Ukai Syndrome", 
-    description="Dokumentasi API Ukai Syndrome", 
+    api,
+    version="1.0",
+    title="Ukai Syndrome",
+    description="Dokumentasi API Ukai Syndrome",
     doc="/docs",
     authorizations=authorizations,
-    security='Bearer Auth'
+    security='Bearer Auth',
+    servers=[
+        {"url": "http://127.0.0.1:5000", "description": "Local development"},
+        {"url": "https://api.ukaisyndrome.id/", "description": "Production"}  # opsional
+    ]
 )
 
 restx_api.add_namespace(auth_ns, path="/auth")

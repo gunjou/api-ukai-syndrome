@@ -66,9 +66,9 @@ def get_tryout_list_admin(id_batch=None, id_paketkelas=None):
                     b.id_batch,
                     b.nama_batch
                 FROM tryout t
-                JOIN to_paketkelas tp ON tp.id_tryout = t.id_tryout AND tp.status = 1
-                JOIN paketkelas pk ON pk.id_paketkelas = tp.id_paketkelas AND pk.status = 1
-                JOIN batch b ON pk.id_batch = b.id_batch AND b.status = 1
+                LEFT JOIN to_paketkelas tp ON tp.id_tryout = t.id_tryout AND tp.status = 1
+                LEFT JOIN paketkelas pk ON pk.id_paketkelas = tp.id_paketkelas AND pk.status = 1
+                LEFT JOIN batch b ON pk.id_batch = b.id_batch AND b.status = 1
                 WHERE t.status = 1
             """
             params = {}
@@ -170,6 +170,72 @@ def assign_tryout_to_classes(id_tryout: int, id_batch: int = None, id_paketkelas
     except SQLAlchemyError as e:
         print(f"[ERROR assign_tryout_to_classes] {e}")
         return False
+    
+def update_tryout(id_tryout, payload):
+    engine = get_connection()
+    now = get_wita()
+    try:
+        with engine.begin() as conn:
+            # Cek apakah tryout ada
+            q_check = text("SELECT id_tryout FROM tryout WHERE id_tryout = :id_tryout AND status = 1")
+            exists = conn.execute(q_check, {"id_tryout": id_tryout}).fetchone()
+            if not exists:
+                return {"success": False, "message": "Tryout tidak ditemukan atau sudah dihapus"}
+
+            # Buat field dinamis hanya untuk kolom yang dikirim
+            fields = []
+            params = {"id_tryout": id_tryout, "updated_at": now}
+            for key in ["judul", "jumlah_soal", "durasi", "max_attempt", "visibility"]:
+                value = payload.get(key)
+                if value is not None:
+                    fields.append(f"{key} = :{key}")
+                    params[key] = value
+
+            if not fields:
+                return {"success": False, "message": "Tidak ada data yang diubah"}
+
+            q_update = text(f"""
+                UPDATE tryout
+                SET {', '.join(fields)}, updated_at = :updated_at
+                WHERE id_tryout = :id_tryout
+            """)
+            conn.execute(q_update, params)
+
+            return {"success": True, "message": "Data tryout berhasil diperbarui"}
+
+    except SQLAlchemyError as e:
+        print(f"[ERROR update_tryout] {e}")
+        return {"success": False, "message": "Terjadi kesalahan pada database"}
+
+def update_tryout_visibility(id_tryout: int, visibility: str):
+    engine = get_connection()
+    now = get_wita()
+    try:
+        with engine.begin() as conn:
+            # Cek apakah tryout ada
+            q_check = text("SELECT id_tryout FROM tryout WHERE id_tryout = :id_tryout AND status = 1")
+            exists = conn.execute(q_check, {"id_tryout": id_tryout}).fetchone()
+            if not exists:
+                return {"success": False, "message": "Tryout tidak ditemukan atau sudah dihapus"}
+
+            # Update visibility
+            q_update = text("""
+                UPDATE tryout
+                SET visibility = :visibility,
+                    updated_at = :updated_at
+                WHERE id_tryout = :id_tryout
+            """)
+            conn.execute(q_update, {
+                "id_tryout": id_tryout,
+                "visibility": visibility,
+                "updated_at": now
+            })
+
+            return {"success": True, "message": f"Visibility tryout berhasil diubah menjadi '{visibility}'"}
+
+    except SQLAlchemyError as e:
+        print(f"[ERROR update_tryout_visibility] {e}")
+        return {"success": False, "message": "Terjadi kesalahan pada database"}
 
 """#=== Mulai pengerjaan tryout ===#"""
 def start_tryout_attempt(id_tryout: int, id_user: int):

@@ -1,5 +1,5 @@
 from flask import request
-from flask_restx import Namespace, Resource, reqparse
+from flask_restx import Namespace, Resource, reqparse, fields
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 
 from .utils.decorator import role_required, session_required
@@ -20,6 +20,15 @@ assign_class_parser.add_argument('id_tryout', type=int, required=True, help='ID 
 assign_class_parser.add_argument('id_batch', type=int, required=False, help='ID batch (opsional)')
 assign_class_parser.add_argument('id_paketkelas', type=int, action='append', required=False, help='List ID paketkelas (opsional)')
 
+edit_tryout_parser = reqparse.RequestParser()
+edit_tryout_parser.add_argument('judul', type=str, required=False, help='Judul tryout')
+edit_tryout_parser.add_argument('jumlah_soal', type=int, required=False, help='Jumlah soal maksimal')
+edit_tryout_parser.add_argument('durasi', type=int, required=False, help='Durasi tryout dalam menit')
+edit_tryout_parser.add_argument('max_attempt', type=int, required=False, help='Jumlah maksimal attempt')
+edit_tryout_parser.add_argument('visibility', type=str, required=False, choices=('hold', 'open'), help='Status visibility tryout')
+
+visibility_parser = reqparse.RequestParser()
+visibility_parser.add_argument('visibility', type=str, required=True, choices=('hold', 'open'), help="Status visibility tryout ('hold' atau 'open')")
 
 @tryout_ns.route('/list')
 class TryoutListResource(Resource):
@@ -110,6 +119,43 @@ class TryoutAssignToClassResource(Resource):
         except Exception as e:
             print(f"[ERROR POST /assign-to-class] {e}")
             return {"message": "Terjadi kesalahan saat assign tryout ke kelas"}, 500
+        
+        
+@tryout_ns.route('/<int:id_tryout>/edit')
+class TryoutEditResource(Resource):
+    @jwt_required()
+    @role_required('admin')
+    @tryout_ns.expect(edit_tryout_parser)  # supaya muncul di Swagger
+    def put(self, id_tryout):
+        """Akses: (Admin) | Edit data tryout"""
+        args = edit_tryout_parser.parse_args()
+        try:
+            result = update_tryout(id_tryout, args)
+            if result["success"]:
+                return {"message": result["message"]}, 200
+            return {"message": result["message"]}, 400
+        except Exception as e:
+            print(f"[ERROR PUT /tryout/{id_tryout}/edit] {e}")
+            return {"message": "Terjadi kesalahan saat memperbarui tryout"}, 500
+
+
+@tryout_ns.route('/<int:id_tryout>/visibility')
+class TryoutVisibilityResource(Resource):
+    @jwt_required()
+    @role_required('admin')
+    @tryout_ns.expect(visibility_parser)
+    def put(self, id_tryout):
+        """Akses: (Admin) | Update visibility tryout (hold/open)"""
+        args = visibility_parser.parse_args()
+        visibility = args['visibility']
+        try:
+            result = update_tryout_visibility(id_tryout, visibility)
+            if result["success"]:
+                return {"message": result["message"]}, 200
+            return {"message": result["message"]}, 400
+        except Exception as e:
+            print(f"[ERROR PUT /tryout/{id_tryout}/visibility] {e}")
+            return {"message": "Terjadi kesalahan saat memperbarui visibility"}, 500
 
 
 """#=== Mulai pengerjaan tryout ===#"""

@@ -10,7 +10,7 @@ def get_jumlah_soal_by_tryout(id_tryout):
     """Ambil jumlah soal maksimal dari tabel tryout"""
     engine = get_connection()
     with engine.connect() as conn:
-        q = text("SELECT jumlah_soal FROM tryout WHERE id_tryout = :id_tryout")
+        q = text("SELECT jumlah_soal FROM tryout WHERE id_tryout = :id_tryout AND status = 1")
         res = conn.execute(q, {"id_tryout": id_tryout}).mappings().fetchone()
         return res['jumlah_soal'] if res else 0
 
@@ -18,7 +18,7 @@ def get_jumlah_soal_tersimpan(id_tryout):
     """Hitung jumlah soal yang sudah disimpan untuk tryout tertentu"""
     engine = get_connection()
     with engine.connect() as conn:
-        q = text("SELECT COUNT(*) FROM soaltryout WHERE id_tryout = :id_tryout")
+        q = text("SELECT COUNT(*) FROM soaltryout WHERE id_tryout = :id_tryout AND status = 1")
         return conn.execute(q, {"id_tryout": id_tryout}).scalar()
     
 
