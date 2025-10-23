@@ -1,7 +1,7 @@
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from ..utils.helper import serialize_row
+from ..utils.helper import serialize_row, serialize_row_datetime
 from ..utils.config import get_connection, get_wita
 
 
@@ -149,7 +149,65 @@ def get_soal_by_tryout(id_tryout):
             # Jika tidak ada soal, kembalikan list kosong
             if not result:
                 return []
-            return [serialize_row(row) for row in result]
+            return [serialize_row_datetime(row) for row in result]
     except SQLAlchemyError as e:
         print(f"[ERROR get_soal_by_tryout] {e}")
         return None
+
+
+def get_detail_soaltryout(id_soaltryout):
+    engine = get_connection()
+    try:
+        with engine.connect() as conn:
+            q = text("""
+                SELECT 
+                    id_soaltryout, id_tryout, nomor_urut, pertanyaan, pilihan_a, pilihan_b, pilihan_c, pilihan_d,
+                    pilihan_e, jawaban_benar, pembahasan, status, created_at, updated_at
+                FROM soaltryout
+                WHERE id_soaltryout = :id_soaltryout AND status = 1
+                LIMIT 1
+            """)
+            result = conn.execute(q, {"id_soaltryout": id_soaltryout}).mappings().first()
+            if not result:
+                return None
+            return serialize_row_datetime(result)
+    except SQLAlchemyError as e:
+        print(f"[ERROR get_detail_soaltryout] {e}")
+        return None
+
+def update_soaltryout(id_soaltryout, data):
+    engine = get_connection()
+    now = get_wita()
+    # Filter field yang dikirim (tidak semua harus ada)
+    fields = {k: v for k, v in data.items() if v is not None}
+    if not fields:
+        return {"success": False, "message": "Tidak ada data yang dikirim untuk diperbarui"}
+    # Validasi jawaban_benar
+    if "jawaban_benar" in fields:
+        valid_choices = ["A", "B", "C", "D", "E"]
+        if fields["jawaban_benar"].upper() not in valid_choices:
+            return {"success": False, "message": "Jawaban benar harus berupa A, B, C, D, atau E"}
+        fields["jawaban_benar"] = fields["jawaban_benar"].upper()
+    try:
+        with engine.begin() as conn:
+            # Pastikan soal ada
+            check = conn.execute(
+                text("SELECT id_soaltryout FROM soaltryout WHERE id_soaltryout = :id_soaltryout AND status = 1"),
+                {"id_soaltryout": id_soaltryout}
+            ).fetchone()
+            if not check:
+                return {"success": False, "message": "Soal tidak ditemukan"}
+            # Buat dynamic SET untuk query update
+            set_clause = ", ".join([f"{k} = :{k}" for k in fields.keys()])
+            fields["id_soaltryout"] = id_soaltryout
+            fields["updated_at"] = now
+            q = text(f"""
+                UPDATE soaltryout
+                SET {set_clause}, updated_at = :updated_at
+                WHERE id_soaltryout = :id_soaltryout
+            """)
+            conn.execute(q, fields)
+        return {"success": True, "message": "Soal berhasil diperbarui"}
+    except SQLAlchemyError as e:
+        print(f"[ERROR update_soaltryout] {e}")
+        return {"success": False, "message": "Gagal memperbarui soal"}

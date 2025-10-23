@@ -25,6 +25,16 @@ upload_soal_parser = reqparse.RequestParser()
 upload_soal_parser.add_argument("id_tryout", type=int, required=True, help="ID tryout harus diisi")
 upload_soal_parser.add_argument("file", type=FileStorage, location="files", required=True, help="File soal harus diunggah")
 
+edit_soal_parser = reqparse.RequestParser()
+edit_soal_parser.add_argument('pertanyaan', type=str, required=False)
+edit_soal_parser.add_argument('pilihan_a', type=str, required=False)
+edit_soal_parser.add_argument('pilihan_b', type=str, required=False)
+edit_soal_parser.add_argument('pilihan_c', type=str, required=False)
+edit_soal_parser.add_argument('pilihan_d', type=str, required=False)
+edit_soal_parser.add_argument('pilihan_e', type=str, required=False)
+edit_soal_parser.add_argument('jawaban_benar', type=str, required=False, choices=('A', 'B', 'C', 'D', 'E'))
+edit_soal_parser.add_argument('pembahasan', type=str, required=False)
+
 
 def map_soal_tuple_to_dict(soal_tuple):
     keys = ['pertanyaan', 'pilihan_a', 'pilihan_b', 'pilihan_c', 'pilihan_d', 'pilihan_e', 'jawaban_benar', 'pembahasan']
@@ -148,4 +158,59 @@ class SoalTryoutListResource(Resource):
             return {
                 "status": "error",
                 "message": "Terjadi kesalahan saat mengambil data soal"
+            }, 500
+
+
+@soaltryout_ns.route('/soal/<int:id_soaltryout>')
+class SoalTryoutDetailResource(Resource):
+    @jwt_required()
+    @role_required('admin')
+    def get(self, id_soaltryout):
+        """Akses: (Admin) | Ambil detail satu soal tryout berdasarkan ID Soal"""
+        try:
+            result = get_detail_soaltryout(id_soaltryout)
+            if result is None:
+                return {
+                    "status": "not_found",
+                    "message": f"Soal dengan ID {id_soaltryout} tidak ditemukan",
+                    "data": None
+                }, 404
+            return {
+                "status": "success",
+                "message": "Data soal berhasil diambil",
+                "data": result
+            }, 200
+        except Exception as e:
+            print(f"[ERROR GET /soal-tryout/soal/{id_soaltryout}] {e}")
+            return {
+                "status": "error",
+                "message": "Terjadi kesalahan saat mengambil data soal"
+            }, 500
+
+
+@soaltryout_ns.route('/<int:id_soaltryout>/edit')
+class SoalTryoutEditResource(Resource):
+    @soaltryout_ns.expect(edit_soal_parser)
+    @jwt_required()
+    @role_required('admin')
+    def put(self, id_soaltryout):
+        """Akses: (Admin) | Edit data satu soal tryout"""
+        args = edit_soal_parser.parse_args()
+        try:
+            result = update_soaltryout(id_soaltryout, args)
+            if result["success"]:
+                return {
+                    "status": "success",
+                    "message": result["message"]
+                }, 200
+            else:
+                return {
+                    "status": "failed",
+                    "message": result["message"]
+                }, 400
+        except Exception as e:
+            print(f"[ERROR PUT /soal-tryout/{id_soaltryout}/edit] {e}")
+            return {
+                "status": "error",
+                "message": "Terjadi kesalahan saat memperbarui soal"
             }, 500
