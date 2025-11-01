@@ -187,7 +187,7 @@ class MateriDetailResource(Resource):
 
 """#== Endpoints lanjutan ==#"""
 @materi_ns.route('/peserta')
-class MateriPesertaResource(Resource):
+class MateriWebPesertaResource(Resource):
     @session_required
     @jwt_required()
     @role_required('peserta')
@@ -195,7 +195,40 @@ class MateriPesertaResource(Resource):
         """Akses: (peserta) Melihat materi yang tersedia untuk peserta"""
         id_user = get_jwt_identity()
         try:
-            result = get_materi_by_peserta(id_user)
+            result = get_materi_by_peserta_web(id_user)
+            if not result:
+                return {"status": "error", "data": [], "message": "Tidak ada materi yang tersedia"}, 200
+            return {"status": "success", "data": result}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+        
+@materi_ns.route('/web/peserta')
+class MateriWebPesertaResource(Resource):
+    @session_required
+    @jwt_required()
+    @role_required('peserta')
+    def get(self):
+        """Akses: (peserta) endpoint web Melihat materi yang tersedia untuk peserta"""
+        id_user = get_jwt_identity()
+        try:
+            result = get_materi_by_peserta_web(id_user)
+            if not result:
+                return {"status": "error", "data": [], "message": "Tidak ada materi yang tersedia"}, 200
+            return {"status": "success", "data": result}, 200
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500
+        
+        
+@materi_ns.route('/mobile/peserta')
+class MateriMobilePesertaResource(Resource):
+    @session_required
+    @jwt_required()
+    @role_required('peserta')
+    def get(self):
+        """Akses: (peserta) endpoint mobile Melihat materi yang tersedia untuk peserta"""
+        id_user = get_jwt_identity()
+        try:
+            result = get_materi_by_peserta_mobile(id_user)
             if not result:
                 return {"status": "error", "data": [], "message": "Tidak ada materi yang tersedia"}, 200
             return {"status": "success", "data": result}, 200
