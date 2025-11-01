@@ -217,6 +217,31 @@ def delete_materi(id_materi):
 
 
 """"#== Query lanjutan ==#"""
+# def get_materi_by_peserta(id_user):
+#     engine = get_connection()
+#     try:
+#         with engine.connect() as conn:
+#             result = conn.execute(text("""
+#                 SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file,
+#                        m.id_modul, pk.id_paketkelas, pk.nama_kelas
+#                 FROM materi m
+#                 JOIN modul mo ON m.id_modul = mo.id_modul
+#                 JOIN modulkelas mk ON mk.id_modul = mo.id_modul
+#                 JOIN paketkelas pk ON mk.id_paketkelas = pk.id_paketkelas
+#                 JOIN userbatch ub ON ub.id_user = :id_user
+#                 JOIN pesertakelas pkls ON pkls.id_user = :id_user
+#                 WHERE pk.id_batch = ub.id_batch
+#                   AND pkls.id_paketkelas = pk.id_paketkelas
+#                   AND m.visibility = 'open'
+#                   AND m.status = 1
+#                   AND mk.status = 1
+#                 ORDER BY mo.created_at ASC
+#             """), {"id_user": id_user}).mappings().fetchall()
+#             return [dict(row) for row in result]
+#     except SQLAlchemyError as e:
+#         print(f"[get_materi_by_peserta] Error: {str(e)}")
+#         return []
+    
 def get_materi_by_peserta_web(id_user):
     engine = get_connection()
     try:
