@@ -30,6 +30,18 @@ edit_tryout_parser.add_argument('visibility', type=str, required=False, choices=
 visibility_parser = reqparse.RequestParser()
 visibility_parser.add_argument('visibility', type=str, required=True, choices=('hold', 'open'), help="Status visibility tryout ('hold' atau 'open')")
 
+attempt_answer_model = tryout_ns.model("AttemptAnswer", {
+    "attempt_token": fields.String(required=True, description="UUID token attempt"),
+    "nomor": fields.Integer(required=True, description="Nomor soal (1-based)"),
+    "jawaban": fields.String(required=False, description="Jawaban peserta (mis. A/B/C/D)"),
+    "ragu": fields.Integer(required=False, description="Flag ragu (0 atau 1)", example=0),
+})
+
+attempt_submit_model = tryout_ns.model("AttemptSubmit", {
+    "attempt_token": fields.String(required=True, description="UUID token attempt")
+})
+
+
 @tryout_ns.route('/list')
 class TryoutListResource(Resource):
     # @session_required
@@ -220,3 +232,76 @@ class AttemptDetailResource(Resource):
         if error:
             return {"message": error}, 400
         return {"data": attempt}, 200
+
+
+@tryout_ns.route('/attempts/answer')
+class SaveAttemptAnswerResource(Resource):
+    @session_required
+    @jwt_required()
+    @role_required(['peserta'])
+    @tryout_ns.expect(attempt_answer_model, validate=True)
+    @tryout_ns.response(200, "Jawaban tersimpan")
+    @tryout_ns.response(400, "Input tidak valid / error")
+    def put(self):
+        """
+        Simpan jawaban sementara untuk sebuah attempt.
+        Body JSON:
+        {
+          "attempt_token": "<token>",
+          "nomor": <int>,
+          "jawaban": "<jawaban>",  // optional
+          "ragu": 0|1              // optional
+        }
+        """
+        id_user = get_jwt_identity()
+        data = request.get_json()
+
+        attempt_token = data.get("attempt_token")
+        nomor = data.get("nomor")
+        jawaban = data.get("jawaban", None)
+        ragu = data.get("ragu", 0)
+
+        if not attempt_token or not nomor:
+            return {"message": "attempt_token dan nomor wajib diisi"}, 400
+
+        try:
+            updated_jawaban, err = save_tryout_answer(
+                attempt_token, id_user, int(nomor), jawaban, int(ragu), None
+            )
+            if err:
+                return {"message": err}, 400
+            # return {"status": "success", "jawaban_user": updated_jawaban}, 200
+            return {"status": "success", "message": f"Jawaban nomor {nomor} telah ditambahkan"}, 200
+        except SQLAlchemyError as e:
+            print(f"[ENDPOINT save answer] {e}")
+            return {"message": "Internal server error"}, 500
+        
+        
+@tryout_ns.route('/attempts/submit')
+class SubmitAttemptResource(Resource):
+    @session_required
+    @jwt_required()
+    @role_required(['peserta'])
+    @tryout_ns.expect(attempt_submit_model, validate=True)
+    @tryout_ns.response(200, "Submit berhasil")
+    @tryout_ns.response(400, "Error")
+    def post(self):
+        """
+        Submit attempt (final). Body:
+        { "attempt_token": "<token>" }
+        """
+        id_user = get_jwt_identity()
+        data = request.get_json()
+        attempt_token = data.get("attempt_token")
+
+        if not attempt_token:
+            return {"message": "attempt_token wajib diisi"}, 400
+
+        try:
+            result, err = submit_tryout_attempt(attempt_token, id_user)
+            if err:
+                return {"message": err}, 400
+            return {"status": "success", "result": result}, 200
+        except SQLAlchemyError as e:
+            print(f"[ENDPOINT submit attempt] {e}")
+            return {"message": "Internal server error"}, 500

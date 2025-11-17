@@ -446,3 +446,228 @@ def get_attempt_detail(id_tryout: int, id_user: int, attempt_token: str):
     except SQLAlchemyError as e:
         print(f"[ERROR get_attempt_detail] {e}")
         return None, "Gagal mengambil detail attempt"
+
+def save_tryout_answer(attempt_token: str, id_user: int, nomor_soal: int, jawaban: str = None, ragu: int = 0, ts: datetime = None):
+    """
+    Update jawaban_user untuk sebuah attempt berdasarkan attempt_token.
+    - nomor_soal: angka 1..N (1-based)
+    - jawaban: nilai jawaban (misal "A" / "B" / "C" / "D" / "E" / string)
+    - ragu: 0 atau 1
+    - ts: datetime ketika menjawab; jika None => sekarang (get_wita())
+    Returns: dict(updated_row) on success or (None, "message") on error
+    """
+    engine = get_connection()
+    try:
+        with engine.begin() as conn:
+            # Ambil attempt sesuai token
+            row = conn.execute(text("""
+                SELECT id_hasiltryout, id_user, jawaban_user, status_pengerjaan, end_time, start_time
+                FROM hasiltryout
+                WHERE attempt_token = :attempt_token AND status = 1
+                LIMIT 1
+            """), {"attempt_token": attempt_token}).mappings().fetchone()
+
+            if not row:
+                return None, "Attempt tidak ditemukan"
+
+            # Pastikan pemiliknya sama
+            if int(row["id_user"]) != int(id_user):
+                return None, "Token tidak valid untuk user ini"
+
+            # Pastikan status pengerjaan ongoing
+            if row["status_pengerjaan"] != "ongoing":
+                return None, "Attempt bukan dalam status ongoing"
+
+            now = ts if ts is not None else get_wita()
+
+            # Cek apakah sudah melewati end_time
+            end_time = row["end_time"]
+            if end_time is not None and now > end_time:
+                # Bisa langsung set status ke 'time_up' atau 'submitted' sesuai kebijakan
+                conn.execute(text("""
+                    UPDATE hasiltryout
+                    SET status_pengerjaan = 'time_up', updated_at = :now
+                    WHERE id_hasiltryout = :id_hasiltryout
+                """), {"now": now, "id_hasiltryout": row["id_hasiltryout"]})
+                return None, "Waktu attempt telah habis"
+
+            # Ambil JSON jawaban_user (bisa None atau JSON)
+            jawaban_user = row["jawaban_user"] or {}
+            # Pastikan jawaban_user adalah dict
+            if isinstance(jawaban_user, str):
+                try:
+                    jawaban_user = json.loads(jawaban_user)
+                except Exception:
+                    jawaban_user = {}
+
+            soal_key = f"soal_{int(nomor_soal)}"
+            # Jika belum ada struktur soal_key, buat default
+            if soal_key not in jawaban_user or not isinstance(jawaban_user[soal_key], dict):
+                jawaban_user[soal_key] = {"jawaban": None, "ragu": 0, "timestamp": None}
+
+            # Update nilai
+            jawaban_user[soal_key]["jawaban"] = jawaban if jawaban is not None else jawaban_user[soal_key].get("jawaban")
+            jawaban_user[soal_key]["ragu"] = int(ragu) if ragu is not None else jawaban_user[soal_key].get("ragu", 0)
+            # Simpan timestamp dalam ISO format
+            jawaban_user[soal_key]["timestamp"] = now.isoformat()
+
+            # Tulis kembali ke DB
+            conn.execute(text("""
+                UPDATE hasiltryout
+                SET jawaban_user = :jawaban_user, updated_at = :now
+                WHERE id_hasiltryout = :id_hasiltryout
+            """), {
+                "jawaban_user": json.dumps(jawaban_user),
+                "now": now,
+                "id_hasiltryout": row["id_hasiltryout"]
+            })
+
+            # Kembalikan jawaban_user yang sudah diupdate
+            # return jawaban_user, None
+            return True, None
+
+    except SQLAlchemyError as e:
+        print(f"[save_tryout_answer] Error: {e}")
+        return None, "Internal server error"
+
+# query/q_tryout.py
+def submit_tryout_attempt(attempt_token: str, id_user: int):
+    """
+    Submit sebuah attempt berdasarkan attempt_token.
+    Mengembalikan dict hasil (nilai, benar, salah, kosong, ragu_ragu, total_soal, attempt_ke, id_hasiltryout)
+    Aturan:
+    - Validasi attempt ada dan status=1
+    - Validasi owner id_user sama dengan row.id_user
+    - Terlepas dari end_time, submit tetap diproses
+    - Jika sudah submitted sebelumnya -> kembalikan error
+    """
+    engine = get_connection()
+    try:
+        with engine.begin() as conn:
+            # 1) Ambil attempt
+            row = conn.execute(text("""
+                SELECT h.id_hasiltryout, h.id_tryout, h.id_user, h.jawaban_user, h.status_pengerjaan, h.attempt_ke
+                FROM hasiltryout h
+                WHERE h.attempt_token = :attempt_token AND h.status = 1
+                LIMIT 1
+            """), {"attempt_token": attempt_token}).mappings().fetchone()
+
+            if not row:
+                return None, "Attempt tidak ditemukan"
+
+            if int(row["id_user"]) != int(id_user):
+                return None, "Token tidak valid untuk user ini"
+
+            if row["status_pengerjaan"] == "submitted":
+                return None, "Attempt sudah disubmit sebelumnya"
+
+            id_hasiltryout = row["id_hasiltryout"]
+            id_tryout = row["id_tryout"]
+            jawaban_user = row["jawaban_user"] or {}
+            # jika disimpan sebagai string JSON, parse
+            if isinstance(jawaban_user, str):
+                try:
+                    jawaban_user = json.loads(jawaban_user)
+                except Exception:
+                    jawaban_user = {}
+
+            # 2) Ambil kunci jawaban untuk tryout ini
+            soal_rows = conn.execute(text("""
+                SELECT nomor_urut, jawaban_benar
+                FROM soaltryout
+                WHERE id_tryout = :id_tryout AND status = 1
+                ORDER BY nomor_urut
+            """), {"id_tryout": id_tryout}).mappings().fetchall()
+
+            if not soal_rows:
+                return None, "Soal tryout tidak ditemukan"
+
+            total_soal = len(soal_rows)
+            benar = 0
+            salah = 0
+            kosong = 0
+            ragu_ragu = 0
+
+            # 3) Loop dan hitung
+            for soal in soal_rows:
+                nomor = int(soal["nomor_urut"])
+                kunci = (soal["jawaban_benar"] or "").strip()
+                key = f"soal_{nomor}"
+                user_ans_obj = jawaban_user.get(key) if isinstance(jawaban_user, dict) else None
+
+                # Normalisasi jawaban user jika ada
+                user_answer = None
+                user_ragu = 0
+                if isinstance(user_ans_obj, dict):
+                    # struktur expected: {"jawaban":..., "ragu":0/1, "timestamp": ...}
+                    user_answer = user_ans_obj.get("jawaban")
+                    user_ragu = int(user_ans_obj.get("ragu", 0) or 0)
+                else:
+                    # jawaban_user mungkin disimpan sebagai {"soal_1": "A"} (simple) — handle fallback
+                    user_answer = user_ans_obj
+                    user_ragu = 0
+
+                # Normalisasi string
+                if user_answer is None or str(user_answer).strip() == "" or str(user_answer).lower() == "none":
+                    kosong += 1
+                else:
+                    ua = str(user_answer).strip().upper()
+                    kb = str(kunci).strip().upper()
+                    if kb == "" or kb.lower() == "none":
+                        # jika kunci kosong, anggap tidak ada soal (treat as kosong)
+                        kosong += 1
+                    elif ua == kb:
+                        benar += 1
+                    else:
+                        salah += 1
+
+                if user_ragu:
+                    ragu_ragu += 1
+
+            # 4) Hitung nilai (skala 0-100)
+            nilai = 0.0
+            if total_soal > 0:
+                nilai = round((benar / total_soal) * 100, 2)
+
+            now = get_wita()
+
+            # 5) Update hasiltryout
+            conn.execute(text("""
+                UPDATE hasiltryout
+                SET nilai = :nilai,
+                    benar = :benar,
+                    salah = :salah,
+                    kosong = :kosong,
+                    ragu_ragu = :ragu_ragu,
+                    status_pengerjaan = 'submitted',
+                    tanggal_pengerjaan = :tanggal_pengerjaan,
+                    updated_at = :now
+                WHERE id_hasiltryout = :id_hasiltryout
+            """), {
+                "nilai": nilai,
+                "benar": benar,
+                "salah": salah,
+                "kosong": kosong,
+                "ragu_ragu": ragu_ragu,
+                "tanggal_pengerjaan": now,
+                "now": now,
+                "id_hasiltryout": id_hasiltryout
+            })
+
+            # 6) Kembalikan ringkasan
+            return {
+                "id_hasiltryout": id_hasiltryout,
+                "id_tryout": id_tryout,
+                "attempt_ke": row["attempt_ke"],
+                "total_soal": total_soal,
+                "benar": benar,
+                "salah": salah,
+                "kosong": kosong,
+                "ragu_ragu": ragu_ragu,
+                "nilai": nilai,
+                "tanggal_pengerjaan": now.isoformat()
+            }, None
+
+    except SQLAlchemyError as e:
+        print(f"[submit_tryout_attempt] Error: {e}")
+        return None, "Internal server error"
