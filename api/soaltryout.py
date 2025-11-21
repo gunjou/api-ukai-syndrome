@@ -214,3 +214,38 @@ class SoalTryoutEditResource(Resource):
                 "status": "error",
                 "message": "Terjadi kesalahan saat memperbarui soal"
             }, 500
+            
+
+@soaltryout_ns.route('/soal-delete/<int:id_soaltryout>')
+class SoalTryoutDeleteResource(Resource):
+    @jwt_required()
+    @role_required('admin')
+    def delete(self, id_soaltryout):
+        """Akses: (Admin) | Soft delete soal tryout (ubah status menjadi 0)"""
+        try:
+            # Cek apakah soal tryout dengan ID tersebut ada
+            soal = get_soal_by_id(id_soaltryout)
+            if not soal:
+                return {
+                    "status": "not_found",
+                    "message": f"Soal dengan ID {id_soaltryout} tidak ditemukan",
+                    "data": None
+                }, 404
+
+            # Lakukan soft delete dengan mengubah status menjadi 0
+            if soft_delete_soaltryout(id_soaltryout):
+                return {
+                    "status": "success",
+                    "message": "Soal tryout berhasil dihapus (soft delete)"
+                }, 200
+            else:
+                return {
+                    "status": "error",
+                    "message": "Terjadi kesalahan saat menghapus soal tryout"
+                }, 500
+        except Exception as e:
+            print(f"[ERROR DELETE /soal-tryout/soal-delete/{id_soaltryout}] {e}")
+            return {
+                "status": "error",
+                "message": "Terjadi kesalahan saat menghapus soal tryout"
+            }, 500

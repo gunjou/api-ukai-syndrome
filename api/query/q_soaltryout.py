@@ -211,3 +211,38 @@ def update_soaltryout(id_soaltryout, data):
     except SQLAlchemyError as e:
         print(f"[ERROR update_soaltryout] {e}")
         return {"success": False, "message": "Gagal memperbarui soal"}
+
+def soft_delete_soaltryout(id_soaltryout: int):
+    engine = get_connection()
+    try:
+        with engine.begin() as conn:
+            # Update status menjadi 0 (soft delete)
+            result = conn.execute(text("""
+                UPDATE soaltryout
+                SET status = 0, updated_at = NOW()
+                WHERE id_soaltryout = :id_soaltryout AND status = 1
+            """), {"id_soaltryout": id_soaltryout})
+
+            # Jika ada baris yang terupdate, berarti berhasil
+            if result.rowcount > 0:
+                return True
+            else:
+                return False
+    except SQLAlchemyError as e:
+        print(f"[ERROR soft_delete_soaltryout] {e}")
+        return False
+
+
+def get_soal_by_id(id_soaltryout: int):
+    engine = get_connection()
+    try:
+        with engine.connect() as conn:
+            q = text("""
+                SELECT * FROM soaltryout
+                WHERE id_soaltryout = :id_soaltryout AND status = 1
+            """)
+            result = conn.execute(q, {"id_soaltryout": id_soaltryout}).mappings().first()
+            return result  # Kembalikan data soal jika ditemukan, atau None jika tidak
+    except SQLAlchemyError as e:
+        print(f"[ERROR get_soal_by_id] {e}")
+        return None

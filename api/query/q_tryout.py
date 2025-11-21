@@ -54,6 +54,20 @@ def get_tryout_list_by_user(id_user: int, role: str):
         print(f"[ERROR get_tryout_list_by_user] {e}")
         return []
     
+def get_tryout_by_id(id_tryout: int):
+    engine = get_connection()
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT * FROM tryout
+                WHERE id_tryout = :id_tryout AND status = 1
+            """), {"id_tryout": id_tryout}).mappings().fetchone()
+            
+            return result  # Kembalikan data tryout jika ditemukan, atau None jika tidak
+    except SQLAlchemyError as e:
+        print(f"[ERROR get_tryout_by_id] {e}")
+        return None
+    
 def get_tryout_list_admin(id_batch=None, id_paketkelas=None):
     engine = get_connection()
     try:
@@ -206,6 +220,26 @@ def update_tryout(id_tryout, payload):
     except SQLAlchemyError as e:
         print(f"[ERROR update_tryout] {e}")
         return {"success": False, "message": "Terjadi kesalahan pada database"}
+    
+def soft_delete_tryout(id_tryout: int):
+    engine = get_connection()
+    try:
+        with engine.begin() as conn:
+            # Update status menjadi 0 (soft delete)
+            result = conn.execute(text("""
+                UPDATE tryout
+                SET status = 0, updated_at = NOW()
+                WHERE id_tryout = :id_tryout AND status = 1
+            """), {"id_tryout": id_tryout})
+            
+            # Jika ada baris yang terupdate, berarti berhasil
+            if result.rowcount > 0:
+                return True
+            else:
+                return False
+    except SQLAlchemyError as e:
+        print(f"[ERROR soft_delete_tryout] {e}")
+        return False
 
 def update_tryout_visibility(id_tryout: int, visibility: str):
     engine = get_connection()

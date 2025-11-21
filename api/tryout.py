@@ -149,6 +149,28 @@ class TryoutEditResource(Resource):
         except Exception as e:
             print(f"[ERROR PUT /tryout/{id_tryout}/edit] {e}")
             return {"message": "Terjadi kesalahan saat memperbarui tryout"}, 500
+        
+        
+@tryout_ns.route('/delete/<int:id_tryout>')
+class TryoutDeleteResource(Resource):
+    @jwt_required()
+    @role_required(['admin'])
+    def delete(self, id_tryout):
+        """Akses: (admin) | Soft delete tryout (ubah status menjadi 0)"""
+        
+        try:
+            # Cek apakah tryout dengan ID tersebut ada
+            tryout = get_tryout_by_id(id_tryout)
+            if not tryout:
+                return {"message": f"Tryout dengan ID {id_tryout} tidak ditemukan"}, 404
+
+            # Lakukan soft delete dengan mengubah status menjadi 0
+            if soft_delete_tryout(id_tryout):
+                return {"message": "Tryout berhasil dihapus (soft delete)"}, 200
+            else:
+                return {"message": "Terjadi kesalahan saat menghapus tryout"}, 500
+        except Exception as e:
+            return {"message": f"Error: {str(e)}"}, 500
 
 
 @tryout_ns.route('/<int:id_tryout>/visibility')
