@@ -10,6 +10,7 @@ instance/*
 .webassets-cache
 .env
 ListEndpoints.md
+HasilTryout.md
 
 ### Flask.Python Stack ###
 # Byte-compiled / optimized / DLL files
