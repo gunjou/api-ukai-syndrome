@@ -1,6 +1,10 @@
-from datetime import date, datetime
+from decimal import Decimal
 import os
 import uuid
+from datetime import date, datetime
+import pandas as pd
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 
 
 def is_valid_date(date_str):
@@ -25,9 +29,34 @@ def serialize_datetime_uuid(row):
             return str(v)
         if isinstance(v, datetime):
             return v.isoformat()
+        if isinstance(v, Decimal):
+            # kalau mau float:
+            return float(v)
+            # atau kalau mau int: return int(v)
         return v
 
     return {k: convert(v) for k, v in dict(row).items()}
+
+def serialize_value(obj):
+    if isinstance(obj, list):
+        return [serialize_value(item) for item in obj]
+    if isinstance(obj, dict):
+        return {k: serialize_value(v) for k, v in obj.items()}
+    # SQLAlchemy RowMapping
+    from sqlalchemy.engine import RowMapping
+    if isinstance(obj, RowMapping):
+        return {k: serialize_value(v) for k, v in dict(obj).items()}
+    # Decimal
+    if isinstance(obj, Decimal):
+        return float(obj)
+    # UUID
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
+    # Datetime
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return obj
+
 
 def serialize_row_datetime(row):
     return {
@@ -69,3 +98,37 @@ def generate_judul(payload):
     
     judul = f"{tanggal_str}_{nickname}_{modul}{suffix}"
     return judul
+
+
+def generate_excel_hasiltryout(id_tryout: int, data: list):
+    df = pd.DataFrame(data)
+
+    temp_path = f"/tmp/export_tryout_{id_tryout}_{datetime.now().timestamp()}.xlsx"
+    df.to_excel(temp_path, index=False)
+
+    return temp_path
+
+
+def generate_pdf_hasiltryout(id_tryout: int, data: list):
+    temp_path = f"/tmp/export_tryout_{id_tryout}.pdf"
+    c = canvas.Canvas(temp_path, pagesize=letter)
+
+    y = 750
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(30, y, f"Laporan Hasil Tryout ID {id_tryout}")
+    y -= 30
+
+    c.setFont("Helvetica", 10)
+
+    for row in data:
+        text = f"{row['nama_user']} | Nilai: {row['nilai']} | Benar: {row['benar']} | Salah: {row['salah']} | Kosong: {row['kosong']}"
+        c.drawString(30, y, text)
+        y -= 20
+
+        if y < 50:
+            c.showPage()
+            c.setFont("Helvetica", 10)
+            y = 750
+
+    c.save()
+    return temp_path

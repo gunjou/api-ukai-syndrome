@@ -26,6 +26,7 @@ from .komentarmateri import komentarmateri_ns
 from .forum import forum_ns
 from .tryout import tryout_ns
 from .soaltryout import soaltryout_ns
+from .hasiltryout import hasiltryout_ns
 
 
 api = Flask(__name__)
@@ -95,3 +96,4 @@ restx_api.add_namespace(komentarmateri_ns, path="/komentar")
 restx_api.add_namespace(forum_ns, path="/forum")
 restx_api.add_namespace(tryout_ns, path="/tryout")
 restx_api.add_namespace(soaltryout_ns, path="/soal-tryout")
+restx_api.add_namespace(hasiltryout_ns, path="/hasil-tryout")

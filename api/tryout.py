@@ -198,15 +198,41 @@ class StartAttemptResource(Resource):
     @session_required
     @jwt_required()
     @role_required(['peserta'])
+    @tryout_ns.response(201, "Attempt baru dimulai")
+    @tryout_ns.response(200, "Melanjutkan attempt lama / attempt lama disubmit otomatis")
+    @tryout_ns.response(400, "Gagal memulai attempt")
+    @tryout_ns.response(404, "Tryout tidak ditemukan")
+    @tryout_ns.response(500, "Internal server error")
     def post(self, id_tryout):
-        """Akses: (peserta) | Mulai attempt tryout"""
+        """
+        Akses: peserta
+        Mulai attempt tryout.
+        Mengembalikan message sesuai kondisi:
+        - Attempt baru dimulai
+        - Attempt sebelumnya masih jalan (dilanjutkan)
+        - Attempt sebelumnya auto-submit & attempt baru dibuat
+        - Tryout tidak ditemukan
+        - Jumlah maksimal attempt tercapai
+        """
         id_user = get_jwt_identity()
 
-        attempt_data, error = start_tryout_attempt(id_tryout, id_user)
+        try:
+            result, message, status_code = start_tryout_attempt(id_tryout, id_user)
 
-        if error:
-            return {"message": error}, 400
-        return {"data": attempt_data}, 201
+            # result = data attempt
+            # message = informasi untuk frontend
+            # status_code = 200 / 201 / 400 / 404
+
+            return {
+                "status": "success" if status_code in (200, 201) else "error",
+                "message": message,
+                "data": result
+            }, status_code
+
+        except Exception as e:
+            print(f"[ERROR StartAttemptResource] {e}")
+            return {"message": "Internal server error"}, 500
+        
     
 @tryout_ns.route('/<int:id_tryout>/questions')
 class TryoutQuestionsResource(Resource):

@@ -4,7 +4,7 @@ import json
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from ..utils.helper import serialize_datetime_uuid, serialize_row
+from ..utils.helper import serialize_datetime_uuid, serialize_row, serialize_value
 from ..utils.config import get_connection, get_wita
 
 
@@ -276,7 +276,8 @@ def start_tryout_attempt(id_tryout: int, id_user: int):
     engine = get_connection()
     try:
         with engine.begin() as conn:
-            # 1. Ambil info tryout (durasi, jumlah soal, max_attempt)
+
+            # 1. Ambil info tryout
             tryout = conn.execute(text("""
                 SELECT id_tryout, jumlah_soal, durasi, max_attempt
                 FROM tryout
@@ -284,56 +285,108 @@ def start_tryout_attempt(id_tryout: int, id_user: int):
             """), {"id_tryout": id_tryout}).mappings().first()
 
             if not tryout:
-                return None, "Tryout tidak ditemukan atau tidak aktif"
+                return None, "Tryout tidak ditemukan atau tidak aktif", 400
 
-            # 2. Hitung attempt keberapa untuk user ini
-            attempt_ke = conn.execute(text("""
-                SELECT COUNT(*) + 1 AS next_attempt
+            # 2. Cek attempt terakhir (status aktif atau submitted)
+            last_attempt = conn.execute(text("""
+                SELECT *
                 FROM hasiltryout
                 WHERE id_tryout = :id_tryout AND id_user = :id_user AND status = 1
-            """), {"id_tryout": id_tryout, "id_user": id_user}).scalar()
-
-            if attempt_ke > tryout["max_attempt"]:
-                return None, "Melebihi jumlah attempt yang diperbolehkan"
-
-            # 3. Generate jawaban_user JSON sesuai jumlah_soal
-            jawaban_user = {
-                f"soal_{i+1}": {"jawaban": None, "ragu": 0, "timestamp": None}
-                for i in range(tryout["jumlah_soal"])
-            }
-
-            # 4. Tentukan start_time & end_time
-            start_time = datetime.now()
-            end_time = start_time + timedelta(minutes=tryout["durasi"])
-
-            # 5. Generate UUID untuk attempt_token
-            attempt_token = str(uuid.uuid4())
-
-            # 6. Insert ke hasiltryout
-            result = conn.execute(text("""
-                INSERT INTO hasiltryout (
-                    id_tryout, id_user, attempt_token, attempt_ke,
-                    start_time, end_time, jawaban_user, status_pengerjaan, status
-                ) VALUES (
-                    :id_tryout, :id_user, :attempt_token, :attempt_ke,
-                    :start_time, :end_time, :jawaban_user, 'ongoing', 1
-                )
-                RETURNING id_hasiltryout, attempt_token, attempt_ke, start_time, end_time
+                ORDER BY id_hasiltryout DESC
+                LIMIT 1
             """), {
                 "id_tryout": id_tryout,
-                "id_user": id_user,
-                "attempt_token": attempt_token,
-                "attempt_ke": attempt_ke,
-                "start_time": start_time,
-                "end_time": end_time,
-                "jawaban_user": json.dumps(jawaban_user),
+                "id_user": id_user
             }).mappings().first()
 
-            return serialize_datetime_uuid(result), None
+            # --- CASE A: Ada attempt ongoing ---
+            if last_attempt and last_attempt["status_pengerjaan"] == "ongoing":
+
+                now = datetime.now()
+                # Case A1: Sudah lewat end_time → forced submitted → buat baru
+                end_time = last_attempt.get("end_time")
+                # Jika end_time tidak ada / None → anggap belum diset, treat sebagai ongoing
+                if end_time is None:
+                    return serialize_datetime_uuid(last_attempt), "Melanjutkan attempt yang masih aktif.", 200
+                # Jika waktu sekarang > end_time → expired
+                if now > end_time:
+                    # update menjadi submitted
+                    submit_tryout_attempt(last_attempt["attempt_token"], id_user)
+                    # conn.execute(text("""
+                    #     UPDATE hasiltryout
+                    #     SET status_pengerjaan = 'submitted', updated_at = NOW()
+                    #     WHERE id_hasiltryout = :id_hasiltryout
+                    # """), {"id_hasiltryout": last_attempt["id_hasiltryout"]})
+
+                    # buat attempt baru
+                    new_attempt, _ = _create_new_attempt(conn, tryout, id_tryout, id_user)
+                    return new_attempt, "Attempt sebelumnya sudah lewat waktu. Membuat attempt baru.", 201
+
+                # Case A2: Masih ongoing dan masih ada waktu → lanjutkan
+                return serialize_datetime_uuid(last_attempt), "Melanjutkan attempt yang masih aktif.", 200
+
+            # --- CASE B: Ada attempt namun status_pengerjaan=submitted → buat baru ---
+            if last_attempt and last_attempt["status_pengerjaan"] == "submitted":
+                new_attempt, _ = _create_new_attempt(conn, tryout, id_tryout, id_user)
+                return new_attempt, "Attempt sebelumnya sudah disubmit. Membuat attempt baru.", 201
+
+            # --- CASE C: Tidak ada attempt sama sekali → attempt baru ---
+            new_attempt, _ = _create_new_attempt(conn, tryout, id_tryout, id_user)
+            return new_attempt, "Memulai attempt pertama atau tidak ada attempt aktif.", 201
 
     except SQLAlchemyError as e:
         print(f"[ERROR start_tryout_attempt] {e}")
-        return None, "Gagal memulai attempt"
+        return None, "Gagal memulai attempt", 500
+
+
+# =================================================================
+# Helper untuk membuat attempt baru
+# =================================================================
+def _create_new_attempt(conn, tryout, id_tryout, id_user):
+    # Hitung attempt keberapa
+    attempt_ke = conn.execute(text("""
+        SELECT COUNT(*) + 1 AS next_attempt
+        FROM hasiltryout
+        WHERE id_tryout = :id_tryout AND id_user = :id_user AND status = 1
+    """), {"id_tryout": id_tryout, "id_user": id_user}).scalar()
+
+    if attempt_ke > tryout["max_attempt"]:
+        return None, "Melebihi jumlah attempt yang diperbolehkan"
+
+    # generate template jawaban_user
+    jawaban_user = {
+        f"soal_{i+1}": {"jawaban": None, "ragu": 0, "timestamp": None}
+        for i in range(tryout["jumlah_soal"])
+    }
+
+    start_time = datetime.now()
+    end_time = start_time + timedelta(minutes=tryout["durasi"])
+    attempt_token = str(uuid.uuid4())
+
+    result = conn.execute(text("""
+        INSERT INTO hasiltryout (
+            id_tryout, id_user, attempt_token, attempt_ke,
+            start_time, end_time, jawaban_user,
+            status_pengerjaan, status
+        ) VALUES (
+            :id_tryout, :id_user, :attempt_token, :attempt_ke,
+            :start_time, :end_time, :jawaban_user,
+            'ongoing', 1
+        )
+        RETURNING id_hasiltryout, attempt_token, attempt_ke, start_time, end_time, jawaban_user
+    """), {
+        "id_tryout": id_tryout,
+        "id_user": id_user,
+        "attempt_token": attempt_token,
+        "attempt_ke": attempt_ke,
+        "start_time": start_time,
+        "end_time": end_time,
+        "jawaban_user": json.dumps(jawaban_user),
+    }).mappings().first()
+
+    return serialize_datetime_uuid(result), None
+
+
     
 def get_tryout_questions(id_tryout: int, id_user: int):
     engine = get_connection()
