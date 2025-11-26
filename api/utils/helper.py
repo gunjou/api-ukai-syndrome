@@ -1,10 +1,16 @@
-from decimal import Decimal
 import os
+import re
 import uuid
-from datetime import date, datetime
+import bleach
 import pandas as pd
+from decimal import Decimal
+from datetime import date, datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+
+
+ALLOWED_TAGS = ['p', 'b', 'i', 'u', 'strong', 'em', 'br', 'img', 'div', 'span']
+ALLOWED_ATTRS = {'img': ['src', 'alt']}
 
 
 def is_valid_date(date_str):
@@ -132,3 +138,31 @@ def generate_pdf_hasiltryout(id_tryout: int, data: list):
 
     c.save()
     return temp_path
+
+
+def convert_to_html_question(text, image_url=None):
+    # normalize text
+    if text is None:
+        return None
+
+    text = text.strip()
+
+    # Jika sudah HTML, jangan wrap lagi
+    if "<p>" in text or "<div>" in text or "<img" in text:
+        html = text
+    else:
+        html = f"<p>{text}</p>"
+
+    # Jika ada gambar tambahan (opsional)
+    if image_url:
+        html += f'<img src="{image_url}" alt="gambar-soal">'
+
+    return html
+
+def remove_images_from_html(html):
+    if not html:
+        return html
+    return re.sub(r'<img[^>]*>', '', html)
+
+def sanitize_html(html):
+    return bleach.clean(html, tags=ALLOWED_TAGS, attributes=ALLOWED_ATTRS, strip=True)

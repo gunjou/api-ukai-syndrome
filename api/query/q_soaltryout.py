@@ -1,8 +1,9 @@
+import requests
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from ..utils.helper import serialize_row, serialize_row_datetime
-from ..utils.config import get_connection, get_wita
+from ..utils.helper import convert_to_html_question, remove_images_from_html, sanitize_html, serialize_row, serialize_row_datetime
+from ..utils.config import CDN_API_KEY, CDN_UPLOAD_URL, get_connection, get_wita
 
 
 """#=== query helper ===#"""
@@ -82,7 +83,7 @@ def insert_soal_tryout(payload):
         print(f"[ERROR insert_soal_tryout] {e}")
         return {"success": False, "message": "Terjadi kesalahan pada database"}
     
-def insert_bulk_soaltryout(id_tryout, soal_list):
+def insert_bulk_soaltryout(id_tryout, soal_list, existing_count):
     engine = get_connection()
     now = get_wita()
 
@@ -90,20 +91,19 @@ def insert_bulk_soaltryout(id_tryout, soal_list):
         with engine.begin() as conn:
             values = []
             for index, soal in enumerate(soal_list):
-                # Normalisasi jawaban
-                jawaban_benar = soal.get("jawaban_benar", "").strip().upper()
+                nomor_urut = existing_count + index + 1
 
                 values.append({
                     "id_tryout": id_tryout,
-                    "nomor_urut": index + 1,
-                    "pertanyaan": soal.get("pertanyaan", "").strip(),
-                    "pilihan_a": soal.get("pilihan_a", "").strip(),
-                    "pilihan_b": soal.get("pilihan_b", "").strip(),
-                    "pilihan_c": soal.get("pilihan_c", "").strip(),
-                    "pilihan_d": soal.get("pilihan_d", "").strip(),
-                    "pilihan_e": soal.get("pilihan_e", "").strip(),
-                    "jawaban_benar": jawaban_benar,
-                    "pembahasan": soal.get("pembahasan", "").strip(),
+                    "nomor_urut": nomor_urut,
+                    "pertanyaan": soal["pertanyaan"],  # sudah HTML
+                    "pilihan_a": soal["pilihan_a"],
+                    "pilihan_b": soal["pilihan_b"],
+                    "pilihan_c": soal["pilihan_c"],
+                    "pilihan_d": soal["pilihan_d"],
+                    "pilihan_e": soal["pilihan_e"],
+                    "jawaban_benar": soal["jawaban_benar"],
+                    "pembahasan": soal["pembahasan"],
                     "now": now
                 })
 
@@ -178,36 +178,100 @@ def get_detail_soaltryout(id_soaltryout):
 def update_soaltryout(id_soaltryout, data):
     engine = get_connection()
     now = get_wita()
-    # Filter field yang dikirim (tidak semua harus ada)
+
+    # Ambil semua field yang dikirim kecuali None
     fields = {k: v for k, v in data.items() if v is not None}
+
     if not fields:
         return {"success": False, "message": "Tidak ada data yang dikirim untuk diperbarui"}
-    # Validasi jawaban_benar
+
+    # =============== VALIDASI JAWABAN BENAR ===============
     if "jawaban_benar" in fields:
-        valid_choices = ["A", "B", "C", "D", "E"]
-        if fields["jawaban_benar"].upper() not in valid_choices:
-            return {"success": False, "message": "Jawaban benar harus berupa A, B, C, D, atau E"}
+        valid = ["A", "B", "C", "D", "E"]
+        if fields["jawaban_benar"].upper() not in valid:
+            return {"success": False, "message": "Jawaban benar harus A, B, C, D, atau E"}
         fields["jawaban_benar"] = fields["jawaban_benar"].upper()
+
+    # =============== HANDLE GAMBAR BARU ===============
+    new_image_url = None
+    if "gambar" in fields and fields["gambar"]:
+        image_file = fields["gambar"]
+
+        cdn_response = requests.post(
+            f"{CDN_UPLOAD_URL}/tryout",
+            headers={"X-API-KEY": CDN_API_KEY},
+            files={"file": (image_file.filename, image_file.stream)}
+        )
+
+        if not cdn_response.ok:
+            return {"success": False, "message": "Gagal upload gambar ke CDN"}
+
+        new_image_url = cdn_response.json().get("url")
+
+        del fields["gambar"]  # hindari masuk DB
+
+    # Ambil flag hapus gambar
+    hapus_gambar = fields.get("hapus_gambar", False)
+    fields.pop("hapus_gambar", None)
+
     try:
         with engine.begin() as conn:
-            # Pastikan soal ada
-            check = conn.execute(
-                text("SELECT id_soaltryout FROM soaltryout WHERE id_soaltryout = :id_soaltryout AND status = 1"),
-                {"id_soaltryout": id_soaltryout}
-            ).fetchone()
-            if not check:
+
+            # Cek soal
+            row = conn.execute(
+                text("SELECT pertanyaan FROM soaltryout WHERE id_soaltryout=:id AND status=1"),
+                {"id": id_soaltryout}
+            ).mappings().fetchone()
+
+            if not row:
                 return {"success": False, "message": "Soal tidak ditemukan"}
-            # Buat dynamic SET untuk query update
+
+            # ============= PROSES PERTANYAAN (jika perlu) =============
+            # Jika perlu update gambar, tetapi pertanyaan tidak dikirim → pakai pertanyaan lama
+            if (new_image_url or hapus_gambar) and "pertanyaan" not in fields:
+                fields["pertanyaan"] = row["pertanyaan"]
+
+            # Jika pertanyaan ada (baik dikirim atau pakai default lama)
+            if "pertanyaan" in fields:
+                html = fields["pertanyaan"]
+
+                # hapus semua gambar lama
+                if hapus_gambar:
+                    html = remove_images_from_html(html)
+
+                # replace dengan gambar baru
+                if new_image_url:
+                    html = remove_images_from_html(html)
+                    html += f'<img src="{new_image_url}" alt="gambar-soal">'
+
+                html = convert_to_html_question(html)
+                html = sanitize_html(html)
+                fields["pertanyaan"] = html
+
+            # ============= PROSES PEMBAHASAN (normal) =============
+            if "pembahasan" in fields:
+                html = convert_to_html_question(fields["pembahasan"])
+                html = sanitize_html(html)
+                fields["pembahasan"] = html
+
+            # Jika TIDAK ADA field apapun setelah proses → error
+            if not fields:
+                return {"success": False, "message": "Tidak ada perubahan yang dilakukan"}
+
+            # ============= UPDATE DB =============
             set_clause = ", ".join([f"{k} = :{k}" for k in fields.keys()])
-            fields["id_soaltryout"] = id_soaltryout
             fields["updated_at"] = now
+            fields["id"] = id_soaltryout
+
             q = text(f"""
                 UPDATE soaltryout
                 SET {set_clause}, updated_at = :updated_at
-                WHERE id_soaltryout = :id_soaltryout
+                WHERE id_soaltryout = :id
             """)
             conn.execute(q, fields)
-        return {"success": True, "message": "Soal berhasil diperbarui"}
+
+            return {"success": True, "message": "Soal berhasil diperbarui"}
+
     except SQLAlchemyError as e:
         print(f"[ERROR update_soaltryout] {e}")
         return {"success": False, "message": "Gagal memperbarui soal"}

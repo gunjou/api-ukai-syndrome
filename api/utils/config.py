@@ -7,6 +7,11 @@ from sqlalchemy import create_engine
 
 load_dotenv()
 
+# === Konfigurasi CDN === #
+CDN_UPLOAD_URL = os.getenv("CDN_UPLOAD_URL")
+CDN_API_KEY = os.getenv("CDN_API_KEY")
+
+
 # === Konfigurasi Database === #
 host = os.getenv("DB_HOST", "localhost")
 port = os.getenv("DB_PORT", "5432")
