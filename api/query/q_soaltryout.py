@@ -29,11 +29,11 @@ def insert_soal_tryout(payload):
     try:
         with engine.begin() as conn:
             # Cek jumlah soal yang sudah ada
-            q_check = text("SELECT COUNT(*) FROM soaltryout WHERE id_tryout = :id_tryout")
+            q_check = text("SELECT COUNT(*) FROM soaltryout WHERE id_tryout = :id_tryout AND status = 1")
             existing_count = conn.execute(q_check, {"id_tryout": payload["id_tryout"]}).scalar()
 
             # Ambil batas maksimal jumlah soal dari tryout
-            q_limit = text("SELECT jumlah_soal FROM tryout WHERE id_tryout = :id_tryout")
+            q_limit = text("SELECT jumlah_soal FROM tryout WHERE id_tryout = :id_tryout AND status = 1")
             max_soal = conn.execute(q_limit, {"id_tryout": payload["id_tryout"]}).scalar()
 
             if max_soal is None:
@@ -47,6 +47,7 @@ def insert_soal_tryout(payload):
                 SELECT COALESCE(MAX(nomor_urut), 0)
                 FROM soaltryout
                 WHERE id_tryout = :id_tryout
+                AND status = 1
             """)
             last_num = conn.execute(q_last, {"id_tryout": payload["id_tryout"]}).scalar()
             next_num = last_num + 1
