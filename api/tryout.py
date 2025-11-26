@@ -318,8 +318,8 @@ class SaveAttemptAnswerResource(Resource):
             )
             if err:
                 return {"message": err}, 400
-            # return {"status": "success", "jawaban_user": updated_jawaban}, 200
-            return {"status": "success", "message": f"Jawaban nomor {nomor} telah ditambahkan"}, 200
+            return {"status": "success", "jawaban_user": updated_jawaban}, 200
+            # return {"status": "success", "message": f"Jawaban nomor {nomor} telah ditambahkan"}, 200
         except SQLAlchemyError as e:
             print(f"[ENDPOINT save answer] {e}")
             return {"message": "Internal server error"}, 500
