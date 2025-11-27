@@ -365,11 +365,11 @@ def _create_new_attempt(conn, tryout, id_tryout, id_user):
         INSERT INTO hasiltryout (
             id_tryout, id_user, attempt_token, attempt_ke,
             start_time, end_time, jawaban_user,
-            status_pengerjaan, status
+            status_pengerjaan, status, created_at, updated_at
         ) VALUES (
             :id_tryout, :id_user, :attempt_token, :attempt_ke,
             :start_time, :end_time, :jawaban_user,
-            'ongoing', 1
+            'ongoing', 1, :now, :now
         )
         RETURNING id_hasiltryout, attempt_token, attempt_ke, start_time, end_time, jawaban_user
     """), {
@@ -380,6 +380,7 @@ def _create_new_attempt(conn, tryout, id_tryout, id_user):
         "start_time": start_time,
         "end_time": end_time,
         "jawaban_user": json.dumps(jawaban_user),
+        "now": get_wita(),
     }).mappings().first()
 
     return serialize_datetime_uuid(result), None

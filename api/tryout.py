@@ -314,7 +314,7 @@ class SaveAttemptAnswerResource(Resource):
 
         try:
             updated_jawaban, err = save_tryout_answer(
-                attempt_token, id_user, int(nomor), jawaban, int(ragu), None
+                attempt_token, id_user, int(nomor), jawaban, int(ragu)
             )
             if err:
                 return {"message": err}, 400
