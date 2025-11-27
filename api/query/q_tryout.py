@@ -187,7 +187,6 @@ def assign_tryout_to_classes(id_tryout: int, id_batch: int = None, id_paketkelas
     
 def update_tryout(id_tryout, payload):
     engine = get_connection()
-    now = get_wita()
     try:
         with engine.begin() as conn:
             # Cek apakah tryout ada
@@ -198,7 +197,7 @@ def update_tryout(id_tryout, payload):
 
             # Buat field dinamis hanya untuk kolom yang dikirim
             fields = []
-            params = {"id_tryout": id_tryout, "updated_at": now}
+            params = {"id_tryout": id_tryout, "updated_at": get_wita()}
             for key in ["judul", "jumlah_soal", "durasi", "max_attempt", "visibility"]:
                 value = payload.get(key)
                 if value is not None:
@@ -228,9 +227,9 @@ def soft_delete_tryout(id_tryout: int):
             # Update status menjadi 0 (soft delete)
             result = conn.execute(text("""
                 UPDATE tryout
-                SET status = 0, updated_at = NOW()
+                SET status = 0, updated_at = :now
                 WHERE id_tryout = :id_tryout AND status = 1
-            """), {"id_tryout": id_tryout})
+            """), {"id_tryout": id_tryout, "now": get_wita()})
             
             # Jika ada baris yang terupdate, berarti berhasil
             if result.rowcount > 0:
@@ -243,7 +242,6 @@ def soft_delete_tryout(id_tryout: int):
 
 def update_tryout_visibility(id_tryout: int, visibility: str):
     engine = get_connection()
-    now = get_wita()
     try:
         with engine.begin() as conn:
             # Cek apakah tryout ada
@@ -256,13 +254,13 @@ def update_tryout_visibility(id_tryout: int, visibility: str):
             q_update = text("""
                 UPDATE tryout
                 SET visibility = :visibility,
-                    updated_at = :updated_at
+                    updated_at = :now
                 WHERE id_tryout = :id_tryout
             """)
             conn.execute(q_update, {
                 "id_tryout": id_tryout,
                 "visibility": visibility,
-                "updated_at": now
+                "now": get_wita()
             })
 
             return {"success": True, "message": f"Visibility tryout berhasil diubah menjadi '{visibility}'"}
@@ -302,7 +300,7 @@ def start_tryout_attempt(id_tryout: int, id_user: int):
             # --- CASE A: Ada attempt ongoing ---
             if last_attempt and last_attempt["status_pengerjaan"] == "ongoing":
 
-                now = datetime.now()
+                now = get_wita()
                 # Case A1: Sudah lewat end_time → forced submitted → buat baru
                 end_time = last_attempt.get("end_time")
                 # Jika end_time tidak ada / None → anggap belum diset, treat sebagai ongoing
@@ -359,7 +357,7 @@ def _create_new_attempt(conn, tryout, id_tryout, id_user):
         for i in range(tryout["jumlah_soal"])
     }
 
-    start_time = datetime.now()
+    start_time = get_wita()
     end_time = start_time + timedelta(minutes=tryout["durasi"])
     attempt_token = str(uuid.uuid4())
 
@@ -534,7 +532,7 @@ def get_attempt_detail(id_tryout: int, id_user: int, attempt_token: str):
         print(f"[ERROR get_attempt_detail] {e}")
         return None, "Gagal mengambil detail attempt"
 
-def save_tryout_answer(attempt_token: str, id_user: int, nomor_soal: int, jawaban: str = None, ragu: int = 0, ts: datetime = None):
+def save_tryout_answer(attempt_token: str, id_user: int, nomor_soal: int, jawaban: str = None, ragu: int = 0):
     """
     Update jawaban_user untuk sebuah attempt berdasarkan attempt_token.
     - nomor_soal: angka 1..N (1-based)
@@ -565,7 +563,7 @@ def save_tryout_answer(attempt_token: str, id_user: int, nomor_soal: int, jawaba
             if row["status_pengerjaan"] != "ongoing":
                 return None, "Attempt bukan dalam status ongoing"
 
-            now = ts if ts is not None else get_wita()
+            now = get_wita()
 
             # Cek apakah sudah melewati end_time
             end_time = row["end_time"]
