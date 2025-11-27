@@ -36,6 +36,7 @@ def get_connection():
 
 # === Mencari Timestamp WITA === #
 def get_wita():
-    wita = pytz.timezone('Asia/Makassar')
-    now_wita = datetime.now(wita)
+    # wita = pytz.timezone('Asia/Makassar')
+    wib = pytz.timezone('Asia/Jakarta')
+    now_wita = datetime.now(wib)
     return now_wita.replace(tzinfo=None)
