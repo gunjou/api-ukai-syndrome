@@ -364,11 +364,11 @@ def _create_new_attempt(conn, tryout, id_tryout, id_user):
     result = conn.execute(text("""
         INSERT INTO hasiltryout (
             id_tryout, id_user, attempt_token, attempt_ke,
-            start_time, end_time, jawaban_user,
+            start_time, end_time, tanggal_pengerjaan, jawaban_user,
             status_pengerjaan, status, created_at, updated_at
         ) VALUES (
             :id_tryout, :id_user, :attempt_token, :attempt_ke,
-            :start_time, :end_time, :jawaban_user,
+            :start_time, :end_time, :now, :jawaban_user,
             'ongoing', 1, :now, :now
         )
         RETURNING id_hasiltryout, attempt_token, attempt_ke, start_time, end_time, jawaban_user
@@ -726,7 +726,6 @@ def submit_tryout_attempt(attempt_token: str, id_user: int):
                     kosong = :kosong,
                     ragu_ragu = :ragu_ragu,
                     status_pengerjaan = 'submitted',
-                    tanggal_pengerjaan = :tanggal_pengerjaan,
                     updated_at = :now
                 WHERE id_hasiltryout = :id_hasiltryout
             """), {
@@ -735,7 +734,6 @@ def submit_tryout_attempt(attempt_token: str, id_user: int):
                 "salah": salah,
                 "kosong": kosong,
                 "ragu_ragu": ragu_ragu,
-                "tanggal_pengerjaan": now,
                 "now": now,
                 "id_hasiltryout": id_hasiltryout
             })
@@ -750,8 +748,7 @@ def submit_tryout_attempt(attempt_token: str, id_user: int):
                 "salah": salah,
                 "kosong": kosong,
                 "ragu_ragu": ragu_ragu,
-                "nilai": nilai,
-                "tanggal_pengerjaan": now.isoformat()
+                "nilai": nilai
             }, None
 
     except SQLAlchemyError as e:
