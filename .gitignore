@@ -3,6 +3,7 @@
 
 ### Custom Ignore ###
 deploy.sh
+*.csv
 
 ### Flask ###
 instance/*

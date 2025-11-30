@@ -4,6 +4,7 @@ from flask_restx import Namespace, Resource, reqparse
 from flask_restx.reqparse import FileStorage
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 
+from .utils.file_loader import load_question_file
 from .utils.helper import convert_to_html_question
 from .utils.config import CDN_API_KEY, CDN_UPLOAD_URL
 from .utils.decorator import role_required, session_required
@@ -111,15 +112,14 @@ class UploadSoalTryoutResource(Resource):
             # Load file CSV/XLSX
             filename = file.filename.lower()
 
-            if filename.endswith(".csv"):
-                df = pd.read_csv(file)
-            elif filename.endswith(".xlsx"):
-                df = pd.read_excel(file)
+            if filename.endswith(".csv") or filename.endswith(".xlsx"):
+                df = load_question_file(file)
             else:
                 return {"message": "Format file harus .csv atau .xlsx"}, 400
 
             # Normalisasi nama kolom
             df.columns = [c.strip().lower() for c in df.columns]
+            # print("COLUMNS:", df.columns.tolist())
 
             expected_columns = [
                 'no', 'pertanyaan', 'pilihan_a', 'pilihan_b', 'pilihan_c',
