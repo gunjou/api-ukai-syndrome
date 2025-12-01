@@ -206,3 +206,31 @@ class DeleteHasilTryoutAttemptResource(Resource):
                 "status": False,
                 "message": "Terjadi kesalahan"
             }, 500
+            
+            
+# ====== Tryout Peserta ====== #
+@hasiltryout_ns.route('/peserta')
+class HasilTryoutUserResource(Resource):
+    @jwt_required()
+    @role_required(['peserta', 'user'])  # atau role apapun untuk siswa
+    @hasiltryout_ns.param('id_tryout', 'Filter berdasarkan ID Tryout')
+    def get(self):
+        """
+        Akses: (peserta)
+        Mendapatkan daftar hasil tryout milik user (peserta) yang sedang login.
+        """
+        user_id = get_jwt_identity()   # ambil id_user dari JWT
+
+        filters = {
+            "id_user": user_id,  # dipaksa dari JWT, tidak bisa override
+            "id_tryout": request.args.get("id_tryout", type=int)
+        }
+
+        try:
+            hasil = get_hasiltryout_list_peserta(filters)
+            return {"data": hasil}, 200
+
+        except Exception as e:
+            print(f"[ERROR GET /hasiltryout/peserta] {e}")
+            return {"message": "Terjadi kesalahan saat mengambil hasil tryout user"}, 500
+ 

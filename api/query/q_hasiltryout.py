@@ -62,7 +62,9 @@ def get_hasiltryout_list(filters: dict):
 
             base_query = """
                 SELECT
-                    h.*,
+                    h.id_hasiltryout, h.id_tryout, h.id_user, h.attempt_token, h.attempt_ke, h.start_time, 
+                    h.end_time, h.tanggal_pengerjaan, h.nilai, h.benar, h.salah, h.kosong, 
+                    h.ragu_ragu, h.status_pengerjaan,
                     u.nama AS nama_user,
                     u.nickname,
                     t.judul AS judul_tryout
@@ -108,7 +110,7 @@ def get_hasiltryout_list(filters: dict):
                 params["status_pengerjaan"] = filters["status_pengerjaan"]
 
             # urutkan berdasarkan waktu pengerjaan terbaru
-            base_query += " ORDER BY h.tanggal_pengerjaan DESC, h.start_time DESC"
+            base_query += " AND h.status = 1 ORDER BY h.tanggal_pengerjaan DESC, h.start_time DESC"
 
             result = conn.execute(text(base_query), params).mappings().fetchall()
 
@@ -307,3 +309,46 @@ def delete_hasil_tryout(id_hasiltryout: int) -> int:
     except Exception as e:
         print("Error delete_hasil_tryout:", e)
         return None
+    
+    
+# ====== Hasil Tryout Peserta ====== #
+def get_hasiltryout_list_peserta(filters: dict):
+    """
+    Mengambil daftar hasil tryout milik 1 user tertentu.
+    """
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+
+            base_query = """
+                SELECT
+                    h.id_hasiltryout, h.id_tryout, h.id_user, h.attempt_token, h.attempt_ke, 
+                    h.start_time, h.end_time, h.tanggal_pengerjaan, h.nilai, 
+                    h.benar, h.salah, h.kosong, h.ragu_ragu, h.status_pengerjaan,
+                    t.judul AS judul_tryout
+                FROM hasiltryout h
+                LEFT JOIN tryout t ON t.id_tryout = h.id_tryout
+                WHERE h.status = 1
+                  AND h.id_user = :id_user
+            """
+
+            params = {
+                "id_user": filters["id_user"]
+            }
+
+            # Filter opsional id_tryout
+            if filters.get("id_tryout"):
+                base_query += " AND h.id_tryout = :id_tryout"
+                params["id_tryout"] = filters["id_tryout"]
+
+            # Urutkan terbaru
+            base_query += " ORDER BY h.tanggal_pengerjaan DESC, h.start_time DESC"
+
+            result = conn.execute(text(base_query), params).mappings().fetchall()
+
+            return [serialize_datetime_uuid(r) for r in result]
+
+    except SQLAlchemyError as e:
+        print(f"[ERROR get_hasiltryout_list_peserta] {e}")
+        return []
