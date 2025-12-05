@@ -26,7 +26,7 @@ class HasilTryoutStatistikResource(Resource):
             if not data:
                 return {"message": f"Statistik untuk tryout {id_tryout} tidak ditemukan"}, 404
 
-            return {"data": data}, 200
+            return {"status": "success", "total": len(data), "data": data}, 200
 
         except Exception as e:
             print(f"[ERROR GET /hasiltryout/statistik] {e}")
@@ -36,7 +36,7 @@ class HasilTryoutStatistikResource(Resource):
 @hasiltryout_ns.route('')
 class HasilTryoutListResource(Resource):
     @jwt_required()
-    @role_required(['admin', 'mentor'])
+    @role_required(['admin'])
     @hasiltryout_ns.param('id_tryout', 'Filter berdasarkan ID Tryout')
     @hasiltryout_ns.param('id_user', 'Filter berdasarkan ID User')
     @hasiltryout_ns.param('tanggal_mulai', 'Filter tanggal dari yyyy-mm-dd')
@@ -62,8 +62,8 @@ class HasilTryoutListResource(Resource):
         }
 
         try:
-            hasil = get_hasiltryout_list(filters)
-            return {"data": hasil}, 200
+            data = get_hasiltryout_list(filters)
+            return {"status": "success", "total": len(data), "data": data}, 200
 
         except Exception as e:
             print(f"[ERROR GET /hasiltryout] {e}")
@@ -85,7 +85,7 @@ class HasilTryoutDetailResource(Resource):
                     "message": f"Hasil tryout dengan ID {id_hasiltryout} tidak ditemukan"
                 }, 404
 
-            return {"data": data}, 200
+            return {"status": "success", "total": len(data), "data": data}, 200
 
         except Exception as e:
             print(f"[ERROR GET /hasiltryout/{id_hasiltryout}] {e}")
@@ -108,7 +108,7 @@ class TryoutLeaderboardResource(Resource):
             if data is None:
                 return {"message": f"Tryout {id_tryout} tidak ditemukan atau belum ada peserta"}, 404
 
-            return {"data": data}, 200
+            return {"status": "success", "total": len(data), "data": data}, 200
 
         except Exception as e:
             print(f"[ERROR GET /tryout/{id_tryout}/leaderboard] {e}")
@@ -135,7 +135,7 @@ class RekapTryoutUserResource(Resource):
                     "message": "Rekap tryout tidak ditemukan untuk user tersebut"
                 }, 404
 
-            return {"data": data}, 200
+            return {"status": "success", "total": len(data), "data": data}, 200
 
         except Exception as e:
             print(f"[ERROR GET /users/{id_user}/rekap-tryout] {e}")
@@ -208,6 +208,29 @@ class DeleteHasilTryoutAttemptResource(Resource):
             }, 500
             
             
+# ====== Tryout Mentor ====== #
+@hasiltryout_ns.route('/mentor')
+class HasilTryoutMentorResource(Resource):
+    @jwt_required()
+    @role_required(['mentor'])
+    @hasiltryout_ns.param('id_tryout', 'Filter tryout tertentu (opsional)')
+    def get(self):
+        """
+        Akses: (mentor)
+        Mendapatkan hasil tryout hanya untuk tryout yang berada di paket kelas mentor.
+        """
+        id_mentor = get_jwt_identity()
+        id_tryout = request.args.get("id_tryout", type=int)
+
+        try:
+            data = get_hasiltryout_list_for_mentor(id_mentor, id_tryout)
+            return {"status": "success", "total": len(data), "data": data}, 200
+
+        except Exception as e:
+            print(f"[ERROR GET /hasiltryout/mentor] {e}")
+            return {"status": "error", "message": "Gagal mengambil hasil tryout"}, 500
+
+
 # ====== Tryout Peserta ====== #
 @hasiltryout_ns.route('/peserta')
 class HasilTryoutUserResource(Resource):
@@ -227,8 +250,8 @@ class HasilTryoutUserResource(Resource):
         }
 
         try:
-            hasil = get_hasiltryout_list_peserta(filters)
-            return {"data": hasil}, 200
+            data = get_hasiltryout_list_peserta(filters)
+            return {"status": "success", "total": len(data), "data": data}, 200
 
         except Exception as e:
             print(f"[ERROR GET /hasiltryout/peserta] {e}")

@@ -15,6 +15,7 @@ materi_model = materi_ns.model("Materi", {
     "judul": fields.String(required=True, description="Judul materi"),
     "url_file": fields.String(required=True, description="URL atau file path"),
     "visibility": fields.String(required=False, description="Status visibility (default: hold)"),
+    "is_downloadable": fields.Integer(required=False, description="Status downloadble (default: 0)"),
 })
 
 materi_autogenerate_model = materi_ns.model("MateriAuto", {
@@ -28,10 +29,15 @@ materi_autogenerate_model = materi_ns.model("MateriAuto", {
     "time": fields.String(required=False, description="Jam untuk tipe_video=terjeda (format HH:MM)"),
     "url_file": fields.String(required=True, description="URL atau file path"),
     "visibility": fields.String(required=False, description="Status visibility (default: hold)"),
+    "is_downloadable": fields.Integer(required=False, description="Status downloadable (default: 0)"),
 })
 
 visibility_model = materi_ns.model("ModulVisibility", {
     "visibility": fields.String(required=True, description="Nilai visibility (open/hold/close)")
+})
+
+downloadable_model = materi_ns.model("ModulDownloadable", {
+    "is_downloadable": fields.Integer(required=True, description="Status downloadable (1 / 0)")
 })
 
 @materi_ns.route('')
@@ -54,6 +60,7 @@ class MateriListResource(Resource):
     def post(self):
         """Akses: (admin), Tambah materi baru"""
         payload = request.get_json()
+        payload["id_owner"] = get_jwt_identity()
 
         if not is_valid_modul(payload["id_modul"]):
             return {"status": "error", "message": "Modul tidak ditemukan"}, 400
@@ -87,6 +94,7 @@ class MateriGenerateTitleResource(Resource):
                 "judul": judul,
                 "url_file": payload["url_file"],
                 "visibility": payload.get("visibility", "hold"),
+                "is_downloadable": payload.get("is_downloadable", None),
             }
 
             created = insert_materi(data_db)
@@ -115,7 +123,8 @@ class MateriGenerateTitleResource(Resource):
             "tipe_materi": data.get("tipe_materi", old["tipe_materi"]),
             "judul": data.get("judul", old["judul"]),
             "url_file": data.get("url_file", old["url_file"]),
-            "visibility": data.get("visibility", old["visibility"])
+            "visibility": data.get("visibility", old["visibility"]),
+            "is_downloadable": data.get("is_downloadable", old["is_downloadable"]),
         }
 
         if not is_valid_modul(updated["id_modul"]):
@@ -159,7 +168,8 @@ class MateriDetailResource(Resource):
             "tipe_materi": data.get("tipe_materi", old["tipe_materi"]),
             "judul": data.get("judul", old["judul"]),
             "url_file": data.get("url_file", old["url_file"]),
-            "visibility": data.get("visibility", old["visibility"])
+            "visibility": data.get("visibility", old["visibility"]),
+            "is_downloadable": data.get("is_downloadable", old["is_downloadable"]),
         }
 
         if not is_valid_modul(updated["id_modul"]):
@@ -316,3 +326,41 @@ class MateriVisibilityResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+
+@materi_ns.route('/<int:id_materi>/downloadable')
+class MateriDownloadableResource(Resource):
+    @jwt_required()
+    @role_required(['admin', 'mentor'])
+    @materi_ns.expect(downloadable_model)
+    def put(self, id_materi):
+        """Akses: (admin/mentor), Ubah status materi bisa didownload atau tidak"""
+
+        data = request.get_json()
+        is_downloadable = data.get("is_downloadable")
+
+        # Validasi
+        if is_downloadable not in [0, 1, "0", "1", True, False]:
+            return {"status": "error", "message": "Nilai is_downloadable harus 0 atau 1"}, 400
+
+        # Normalisasi
+        is_downloadable = int(is_downloadable)
+
+        # Cek apakah materi tersedia
+        existing = get_materi_by_id(id_materi)
+        if not existing:
+            return {"status": "error", "message": "Materi tidak ditemukan"}, 404
+
+        try:
+            result = update_materi_downloadable(id_materi, is_downloadable)
+            if not result:
+                return {"status": "error", "message": "Gagal update status downloadable"}, 400
+
+            status_text = "bisa di-download" if is_downloadable == 1 else "tidak bisa di-download"
+
+            return {
+                "status": "success",
+                "message": f"Status downloadable untuk materi '{result['judul']}' berhasil diubah menjadi {status_text}"
+            }, 200
+
+        except SQLAlchemyError as e:
+            return {"status": "error", "message": str(e)}, 500

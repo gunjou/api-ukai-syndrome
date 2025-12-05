@@ -311,6 +311,77 @@ def delete_hasil_tryout(id_hasiltryout: int) -> int:
         return None
     
     
+# ====== Hasil Tryout Mentor ====== #
+def get_hasiltryout_list_for_mentor(id_mentor, id_tryout=None):
+    """
+    Ambil hasil tryout berdasarkan paket kelas yang diajar mentor.
+    Mentor hanya boleh melihat tryout yang berada di paket kelas miliknya.
+    """
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+
+            # 1. Ambil paket kelas milik mentor
+            paketkelas_query = text("""
+                SELECT id_paketkelas 
+                FROM mentorkelas
+                WHERE id_user = :id_mentor AND status = 1
+            """)
+            paketkelas = conn.execute(paketkelas_query, {"id_mentor": id_mentor}).fetchall()
+
+            if not paketkelas:
+                return []  # Mentor tidak pegang kelas apa pun
+
+            paketkelas_ids = [row[0] for row in paketkelas]
+
+            # 2. Ambil tryout dari paket kelas itu
+            tryout_query = text(f"""
+                SELECT id_tryout FROM to_paketkelas
+                WHERE status = 1 AND id_paketkelas = ANY(:kelas_ids)
+            """)
+            tryout_list = conn.execute(tryout_query, {"kelas_ids": paketkelas_ids}).fetchall()
+
+            if not tryout_list:
+                return []  # Tidak ada tryout di kelas mentor
+
+            tryout_ids = [row[0] for row in tryout_list]
+
+            # 3. Ambil hasil tryout
+            base_query = """
+                SELECT
+                    h.id_hasiltryout, h.id_tryout, h.id_user, h.attempt_token,
+                    h.attempt_ke, h.start_time, h.end_time, h.tanggal_pengerjaan,
+                    h.nilai, h.benar, h.salah, h.kosong, h.ragu_ragu,
+                    h.status_pengerjaan,
+                    u.nama AS nama_user, u.nickname,
+                    t.judul AS judul_tryout
+                FROM hasiltryout h
+                LEFT JOIN users u ON u.id_user = h.id_user
+                LEFT JOIN tryout t ON t.id_tryout = h.id_tryout
+                WHERE h.status = 1
+                  AND h.id_tryout = ANY(:tryout_ids)
+            """
+
+            params = {"tryout_ids": tryout_ids}
+
+            # Filter opsional: id_tryout tertentu
+            if id_tryout:
+                base_query += " AND h.id_tryout = :id_tryout"
+                params["id_tryout"] = id_tryout
+
+            # Urutkan terbaru
+            base_query += " ORDER BY h.tanggal_pengerjaan DESC, h.start_time DESC"
+
+            result = conn.execute(text(base_query), params).mappings().fetchall()
+
+            return [serialize_datetime_uuid(r) for r in result]
+
+    except SQLAlchemyError as e:
+        print(f"[ERROR get_hasiltryout_list_for_mentor] {e}")
+        return []
+
+
 # ====== Hasil Tryout Peserta ====== #
 def get_hasiltryout_list_peserta(filters: dict):
     """
