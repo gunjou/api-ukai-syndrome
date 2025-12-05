@@ -301,10 +301,14 @@ def delete_hasil_tryout(id_hasiltryout: int) -> int:
     try:
         with conn.begin() as trans:
             query = text("""
-                DELETE FROM hasiltryout
+                UPDATE hasiltryout set status = 0, updated_at = :now
                 WHERE id_hasiltryout = :id_hasiltryout
             """)
-            result = trans.execute(query, {"id_hasiltryout": id_hasiltryout})
+            # query = text("""
+            #     DELETE FROM hasiltryout
+            #     WHERE id_hasiltryout = :id_hasiltryout
+            # """)
+            result = trans.execute(query, {"id_hasiltryout": id_hasiltryout, "now": get_wita()})
             return result.rowcount  # jumlah baris terhapus
     except Exception as e:
         print("Error delete_hasil_tryout:", e)
