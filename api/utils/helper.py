@@ -166,3 +166,21 @@ def remove_images_from_html(html):
 
 def sanitize_html(html):
     return bleach.clean(html, tags=ALLOWED_TAGS, attributes=ALLOWED_ATTRS, strip=True)
+
+def normalize_bool_to_int(value):
+    """
+    Normalisasi nilai boolean ke integer (1 atau 0).
+    Bisa menerima: 1, 0, '1', '0', True, False, 'true', 'false', dll.
+    """
+    if value is None:
+        return 0
+    if isinstance(value, bool):     # True/False → 1/0
+        return int(value)
+    # Ubah ke string dan lower-case untuk manipulasi
+    str_val = str(value).strip().lower()
+    if str_val in ("1", "true", "yes", "y", "on"):
+        return 1
+    if str_val in ("0", "false", "no", "n", "off"):
+        return 0
+    # Jika input aneh → fallback 0
+    return 0

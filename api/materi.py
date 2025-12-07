@@ -3,7 +3,7 @@ from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
 
-from .utils.helper import generate_judul
+from .utils.helper import generate_judul, normalize_bool_to_int
 from .utils.decorator import role_required, session_required
 from .query.q_materi import *
 
@@ -271,6 +271,9 @@ class MateriMentorResource(Resource):
         # 🔎 Validasi: apakah modul ini milik kelas yang diampu mentor?
         if not is_mentor_of_modul(id_user, payload["id_modul"]):
             return {"status": "error", "message": "Akses ditolak. Modul bukan milik kelas yang Anda ampu."}, 403
+
+        # Normalisasi downloadable
+        payload["is_downloadable"] = normalize_bool_to_int(payload.get("is_downloadable"))
 
         try:
             created = insert_materi(payload)
