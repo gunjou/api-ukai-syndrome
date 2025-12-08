@@ -299,7 +299,7 @@ def get_materi_by_mentor(id_user):
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, m.is_downloadable,
+                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, m.visibility, m.is_downloadable,
                        m.id_modul, pk.id_paketkelas, pk.nama_kelas
                 FROM materi m
                 JOIN modul mo ON m.id_modul = mo.id_modul
@@ -322,7 +322,7 @@ def get_materi_by_mentor_and_kelas(id_user, id_paketkelas):
     try:
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, is_downloadable,
+                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, m.visibility, m.is_downloadable,
                        m.id_modul, pk.id_paketkelas, pk.nama_kelas
                 FROM materi m
                 JOIN modul mo ON m.id_modul = mo.id_modul
