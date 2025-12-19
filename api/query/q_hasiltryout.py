@@ -427,3 +427,102 @@ def get_hasiltryout_list_peserta(filters: dict):
     except SQLAlchemyError as e:
         print(f"[ERROR get_hasiltryout_list_peserta] {e}")
         return []
+
+
+def get_hasiltryout_detail_peserta(id_hasiltryout, id_user):
+    """
+    Ambil detail hasil tryout peserta + pencocokan jawaban.
+    """
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+
+            # 1️⃣ Ambil hasil tryout (pastikan milik user)
+            hasil = conn.execute(text("""
+                SELECT
+                    h.id_hasiltryout, h.id_tryout, h.attempt_ke, h.nilai, h.benar, h.salah,h.kosong, h.ragu_ragu, 
+                    h.status_pengerjaan, h.jawaban_user, h.tanggal_pengerjaan, t.judul AS judul_tryout, t.jumlah_soal
+                FROM hasiltryout h
+                JOIN tryout t ON t.id_tryout = h.id_tryout
+                WHERE h.id_hasiltryout = :id_hasiltryout
+                  AND h.id_user = :id_user
+                  AND h.status = 1
+                  AND t.status = 1
+            """), {
+                "id_hasiltryout": id_hasiltryout,
+                "id_user": id_user
+            }).mappings().fetchone()
+
+            if not hasil:
+                return None
+
+            jawaban_user = hasil["jawaban_user"] or {}
+
+            # 2️⃣ Ambil soal tryout
+            soal_list = conn.execute(text("""
+                SELECT
+                    id_soaltryout, nomor_urut, pertanyaan, pilihan_a, pilihan_b, pilihan_c, pilihan_d, pilihan_e, 
+                    jawaban_benar, pembahasan
+                FROM soaltryout
+                WHERE id_tryout = :id_tryout
+                  AND status = 1
+                ORDER BY nomor_urut ASC
+            """), {
+                "id_tryout": hasil["id_tryout"]
+            }).mappings().fetchall()
+
+            # 3️⃣ Cocokkan jawaban
+            detail_soal = []
+
+            for soal in soal_list:
+                key = f"soal_{soal['nomor_urut']}"
+                user_ans = jawaban_user.get(key, {})
+
+                jawaban = user_ans.get("jawaban")
+                ragu = user_ans.get("ragu", 0)
+
+                if jawaban is None:
+                    status_jawaban = None # kosong
+                elif jawaban == soal["jawaban_benar"]:
+                    status_jawaban = 1 # benar
+                else:
+                    status_jawaban = 0 # salah
+
+                detail_soal.append({
+                    "nomor": soal["nomor_urut"],
+                    "pertanyaan": soal["pertanyaan"],
+                    "pilihan": {
+                        "A": soal["pilihan_a"],
+                        "B": soal["pilihan_b"],
+                        "C": soal["pilihan_c"],
+                        "D": soal["pilihan_d"],
+                        "E": soal["pilihan_e"],
+                    },
+                    "jawaban_user": jawaban,
+                    "jawaban_benar": soal["jawaban_benar"],
+                    "status_jawaban": status_jawaban,
+                    "ragu": bool(ragu),
+                    "pembahasan": soal["pembahasan"]
+                })
+
+            # 4️⃣ Response final
+            return serialize_datetime_uuid({
+                "id_hasiltryout": hasil["id_hasiltryout"],
+                "judul_tryout": hasil["judul_tryout"],
+                "attempt_ke": hasil["attempt_ke"],
+                "tanggal_pengerjaan": hasil["tanggal_pengerjaan"],
+                "nilai": hasil["nilai"],
+                "statistik": {
+                    "benar": hasil["benar"],
+                    "salah": hasil["salah"],
+                    "kosong": hasil["kosong"],
+                    "ragu_ragu": hasil["ragu_ragu"]
+                },
+                "jumlah_soal": hasil["jumlah_soal"],
+                "detail_soal": detail_soal
+            })
+
+    except SQLAlchemyError as e:
+        print(f"[ERROR get_hasiltryout_detail_peserta] {e}")
+        return None

@@ -256,4 +256,36 @@ class HasilTryoutUserResource(Resource):
         except Exception as e:
             print(f"[ERROR GET /hasiltryout/peserta] {e}")
             return {"message": "Terjadi kesalahan saat mengambil hasil tryout user"}, 500
- 
+
+
+@hasiltryout_ns.route('/peserta/<int:id_hasiltryout>')
+class HasilTryoutDetailPesertaResource(Resource):
+    @jwt_required()
+    @role_required(['peserta', 'user'])
+    def get(self, id_hasiltryout):
+        """
+        Akses: (peserta)
+        Melihat detail hasil tryout milik sendiri (review jawaban).
+        """
+        id_user = get_jwt_identity()
+
+        try:
+            data = get_hasiltryout_detail_peserta(id_hasiltryout, id_user)
+
+            if not data:
+                return {
+                    "status": "error",
+                    "message": "Hasil tryout tidak ditemukan atau bukan milik Anda"
+                }, 404
+
+            return {
+                "status": "success",
+                "data": data
+            }, 200
+
+        except Exception as e:
+            print(f"[ERROR GET /hasiltryout/peserta/{id_hasiltryout}] {e}")
+            return {
+                "status": "error",
+                "message": "Terjadi kesalahan saat mengambil detail hasil tryout"
+            }, 500
