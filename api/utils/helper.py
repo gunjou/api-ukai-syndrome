@@ -1,10 +1,11 @@
 import os
 import re
 import uuid
+import pytz
 import bleach
 import pandas as pd
 from decimal import Decimal
-from datetime import date, datetime
+from datetime import date, datetime, time
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
@@ -12,6 +13,35 @@ from reportlab.pdfgen import canvas
 ALLOWED_TAGS = ['p', 'b', 'i', 'u', 'strong', 'em', 'br', 'img', 'div', 'span']
 ALLOWED_ATTRS = {'img': ['src', 'alt']}
 
+
+def get_wib():
+    wib = pytz.timezone('Asia/Jakarta')
+    now_wib = datetime.now(wib)
+    return now_wib.replace(tzinfo=None)
+
+def normalize_access_period(start_date, end_date):
+    """
+    Input: YYYY-MM-DD (string) atau None
+    Output: start_at, end_at (datetime WIB tanpa tzinfo)
+    """
+    wib = pytz.timezone("Asia/Jakarta")
+
+    start_at = None
+    end_at = None
+
+    if start_date:
+        start_at = datetime.combine(
+            datetime.strptime(start_date, "%Y-%m-%d").date(),
+            time(0, 0, 0)
+        )
+
+    if end_date:
+        end_at = datetime.combine(
+            datetime.strptime(end_date, "%Y-%m-%d").date(),
+            time(23, 59, 59)
+        )
+
+    return start_at, end_at
 
 def is_valid_date(date_str):
     """Cek apakah string sesuai format YYYY-MM-DD"""

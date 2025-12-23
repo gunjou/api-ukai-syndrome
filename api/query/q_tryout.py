@@ -4,7 +4,7 @@ import json
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from ..utils.helper import serialize_datetime_uuid, serialize_row, serialize_value
+from ..utils.helper import normalize_access_period, serialize_datetime_uuid, serialize_row, serialize_value
 from ..utils.config import get_connection, get_wita
 
 
@@ -127,10 +127,13 @@ def get_tryout_list_admin(id_batch=None, id_paketkelas=None):
 def insert_new_tryout(payload):
     engine = get_connection()
     try:
+        start_at, end_at = normalize_access_period(payload.get("access_start_date"), payload.get("access_end_date"))
         with engine.begin() as conn:
             q = text("""
-                INSERT INTO tryout (judul, jumlah_soal, durasi, max_attempt, status, visibility, created_at, updated_at)
-                VALUES (:judul, :jumlah_soal, :durasi, :max_attempt, 1, 'hold', :now, :now)
+                INSERT INTO tryout (judul, jumlah_soal, durasi, max_attempt, status, visibility,
+                    access_start_at, access_end_at, created_at, updated_at)
+                VALUES (:judul, :jumlah_soal, :durasi, :max_attempt, 1, 'hold', 
+                    :access_start_at, :access_end_at, :now, :now)
                 RETURNING id_tryout
             """)
             result = conn.execute(q, {
@@ -138,6 +141,8 @@ def insert_new_tryout(payload):
                 "jumlah_soal": payload["jumlah_soal"],
                 "durasi": payload["durasi"],
                 "max_attempt": payload["max_attempt"],
+                "access_start_at": start_at,
+                "access_end_at": end_at,
                 "now": get_wita()
             })
 
@@ -203,6 +208,19 @@ def update_tryout(id_tryout, payload):
                 if value is not None:
                     fields.append(f"{key} = :{key}")
                     params[key] = value
+                    
+            start_date = payload.get("access_start_date")
+            end_date = payload.get("access_end_date")
+
+            if start_date is not None or end_date is not None:
+                start_at, end_at = normalize_access_period(start_date, end_date)
+                # update hanya jika dikirim
+                if start_date is not None:
+                    fields.append("access_start_at = :access_start_at")
+                    params["access_start_at"] = start_at
+                if end_date is not None:
+                    fields.append("access_end_at = :access_end_at")
+                    params["access_end_at"] = end_at
 
             if not fields:
                 return {"success": False, "message": "Tidak ada data yang diubah"}

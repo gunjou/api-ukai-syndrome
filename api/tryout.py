@@ -14,6 +14,8 @@ create_tryout_parser.add_argument('judul', type=str, required=True, help='Judul 
 create_tryout_parser.add_argument('jumlah_soal', type=int, required=True, help='Jumlah soal')
 create_tryout_parser.add_argument('durasi', type=int, required=True, help='Durasi dalam menit')
 create_tryout_parser.add_argument('max_attempt', type=int, required=True, help='Jumlah maksimal percobaan')
+create_tryout_parser.add_argument('access_start_date', type=str,required=True, help='Tanggal mulai akses (YYYY-MM-DD)')
+create_tryout_parser.add_argument('access_end_date', type=str, required=True, help='Tanggal akhir akses (YYYY-MM-DD)')
 
 assign_class_parser = reqparse.RequestParser()
 assign_class_parser.add_argument('id_tryout', type=int, required=True, help='ID tryout')
@@ -26,6 +28,8 @@ edit_tryout_parser.add_argument('jumlah_soal', type=int, required=False, help='J
 edit_tryout_parser.add_argument('durasi', type=int, required=False, help='Durasi tryout dalam menit')
 edit_tryout_parser.add_argument('max_attempt', type=int, required=False, help='Jumlah maksimal attempt')
 edit_tryout_parser.add_argument('visibility', type=str, required=False, choices=('hold', 'open'), help='Status visibility tryout')
+edit_tryout_parser.add_argument('access_start_date', type=str, required=False, help='Tanggal mulai akses (YYYY-MM-DD)')
+edit_tryout_parser.add_argument('access_end_date', type=str, required=False, help='Tanggal akhir akses (YYYY-MM-DD)')
 
 visibility_parser = reqparse.RequestParser()
 visibility_parser.add_argument('visibility', type=str, required=True, choices=('hold', 'open'), help="Status visibility tryout ('hold' atau 'open')")
