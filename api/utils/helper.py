@@ -19,29 +19,70 @@ def get_wib():
     now_wib = datetime.now(wib)
     return now_wib.replace(tzinfo=None)
 
-def normalize_access_period(start_date, end_date):
+def normalize_access_datetime(date_str, time_str, is_end=False):
     """
-    Input: YYYY-MM-DD (string) atau None
-    Output: start_at, end_at (datetime WIB tanpa tzinfo)
+    Gabungkan date + time menjadi datetime (WIB).
+    - Jika time tidak dikirim:
+      start  → 00:00:00
+      end    → 23:59:59
     """
-    wib = pytz.timezone("Asia/Jakarta")
+    if not date_str:
+        return None
 
-    start_at = None
-    end_at = None
+    date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
 
-    if start_date:
-        start_at = datetime.combine(
-            datetime.strptime(start_date, "%Y-%m-%d").date(),
-            time(0, 0, 0)
-        )
+    if time_str:
+        time_obj = datetime.strptime(time_str, "%H:%M").time()
+    else:
+        time_obj = time(23, 59, 59) if is_end else time(0, 0, 0)
 
-    if end_date:
-        end_at = datetime.combine(
-            datetime.strptime(end_date, "%Y-%m-%d").date(),
-            time(23, 59, 59)
-        )
+    return datetime.combine(date_obj, time_obj)
 
-    return start_at, end_at
+def enrich_datetime_fields(row, field_name):
+    """
+    Ambil datetime dari row (sebelum serialize),
+    tambahkan field *_date dan *_time
+    """
+    value = row.get(field_name)
+
+    if not value:
+        row[f"{field_name}_date"] = None
+        row[f"{field_name}_time"] = None
+        return row
+
+    # value masih datetime asli
+    row[f"{field_name}_date"] = value.strftime("%Y-%m-%d")
+    row[f"{field_name}_time"] = value.strftime("%H:%M")
+
+    return row
+
+def split_datetime_fields(row: dict, field_name: str):
+    """
+    Tambahkan field _date dan _time dari datetime
+    """
+    value = row.get(field_name)
+
+    if not value:
+        row[f"{field_name}_date"] = None
+        row[f"{field_name}_time"] = None
+        return row
+
+    if isinstance(value, str):
+        # antisipasi jika sudah string
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            row[f"{field_name}_date"] = value
+            row[f"{field_name}_time"] = None
+            return row
+
+    row[f"{field_name}_date"] = value.strftime("%Y-%m-%d")
+    row[f"{field_name}_time"] = value.strftime("%H:%M")
+
+    # optional: pastikan format full
+    row[field_name] = value.strftime("%Y-%m-%d %H:%M:%S")
+
+    return row
 
 def is_valid_date(date_str):
     """Cek apakah string sesuai format YYYY-MM-DD"""

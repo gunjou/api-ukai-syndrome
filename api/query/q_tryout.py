@@ -4,7 +4,7 @@ import json
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from ..utils.helper import normalize_access_period, serialize_datetime_uuid, serialize_row, serialize_value
+from ..utils.helper import enrich_datetime_fields, normalize_access_datetime, serialize_datetime_uuid, serialize_row, serialize_value, split_datetime_fields
 from ..utils.config import get_connection, get_wita
 
 
@@ -49,7 +49,15 @@ def get_tryout_list_by_user(id_user: int, role: str):
                 """), {"id_user": id_user}).mappings().fetchall()
             else:
                 return []
-            return [serialize_row(row) for row in result]
+            
+            processed = []
+            for row in result:
+                row_dict = dict(row)  # RowMapping → dict
+                # ⬅️ PECAH DATETIME SEBELUM SERIALIZE
+                enrich_datetime_fields(row_dict, "access_start_at")
+                enrich_datetime_fields(row_dict, "access_end_at")
+                processed.append(serialize_row(row_dict))
+            return processed
     except SQLAlchemyError as e:
         print(f"[ERROR get_tryout_list_by_user] {e}")
         return []
@@ -98,7 +106,17 @@ def get_tryout_list_admin(id_batch=None, id_paketkelas=None):
             query += " ORDER BY t.created_at DESC"
 
             result = conn.execute(text(query), params).mappings().fetchall()
-            raw_data = [serialize_row(row) for row in result]
+            processed = []
+            for row in result:
+                row_dict = dict(row)  # ubah RowMapping ke dict biasa
+
+                # ⬅️ PECAH DATETIME DI SINI (SEBELUM SERIALIZE)
+                enrich_datetime_fields(row_dict, "access_start_at")
+                enrich_datetime_fields(row_dict, "access_end_at")
+
+                processed.append(serialize_row(row_dict))
+
+            raw_data = processed
 
             # Gabungkan berdasarkan id_tryout
             tryout_map = {}
@@ -127,15 +145,34 @@ def get_tryout_list_admin(id_batch=None, id_paketkelas=None):
 def insert_new_tryout(payload):
     engine = get_connection()
     try:
-        start_at, end_at = normalize_access_period(payload.get("access_start_date"), payload.get("access_end_date"))
+        start_at = normalize_access_datetime(
+            payload.get("access_start_date"),
+            payload.get("access_start_time"),
+            is_end=False
+        )
+
+        end_at = normalize_access_datetime(
+            payload.get("access_end_date"),
+            payload.get("access_end_time"),
+            is_end=True
+        )
+
+        # Validasi logis
+        if start_at and end_at and start_at >= end_at:
+            raise ValueError("Waktu mulai tidak boleh melebihi atau sama dengan waktu akhir")
+
         with engine.begin() as conn:
             q = text("""
-                INSERT INTO tryout (judul, jumlah_soal, durasi, max_attempt, status, visibility,
-                    access_start_at, access_end_at, created_at, updated_at)
-                VALUES (:judul, :jumlah_soal, :durasi, :max_attempt, 1, 'hold', 
-                    :access_start_at, :access_end_at, :now, :now)
+                INSERT INTO tryout (
+                    judul, jumlah_soal, durasi, max_attempt, status, visibility, access_start_at, 
+                    access_end_at, created_at, updated_at
+                )
+                VALUES ( 
+                :judul, :jumlah_soal, :durasi, :max_attempt, 1, 'hold', :access_start_at, :access_end_at, :now, :now
+                )
                 RETURNING id_tryout
             """)
+
             result = conn.execute(q, {
                 "judul": payload["judul"],
                 "jumlah_soal": payload["jumlah_soal"],
@@ -143,11 +180,14 @@ def insert_new_tryout(payload):
                 "max_attempt": payload["max_attempt"],
                 "access_start_at": start_at,
                 "access_end_at": end_at,
-                "now": get_wita()
+                "now": get_wita()  # tetap WIB
             })
 
-            id_tryout = result.scalar()
-            return id_tryout
+            return result.scalar()
+
+    except ValueError as ve:
+        print(f"[VALIDATION insert_new_tryout] {ve}")
+        return None
     except SQLAlchemyError as e:
         print(f"[ERROR insert_new_tryout] {e}")
         return None
@@ -194,37 +234,73 @@ def update_tryout(id_tryout, payload):
     engine = get_connection()
     try:
         with engine.begin() as conn:
-            # Cek apakah tryout ada
-            q_check = text("SELECT id_tryout FROM tryout WHERE id_tryout = :id_tryout AND status = 1")
-            exists = conn.execute(q_check, {"id_tryout": id_tryout}).fetchone()
-            if not exists:
-                return {"success": False, "message": "Tryout tidak ditemukan atau sudah dihapus"}
+            # 1️⃣ Ambil data lama
+            old = conn.execute(
+                text("""
+                    SELECT access_start_at, access_end_at
+                    FROM tryout
+                    WHERE id_tryout = :id_tryout AND status = 1
+                """),
+                {"id_tryout": id_tryout}
+            ).mappings().fetchone()
 
-            # Buat field dinamis hanya untuk kolom yang dikirim
+            if not old:
+                return {"success": False, "message": "Tryout tidak ditemukan"}
+
             fields = []
-            params = {"id_tryout": id_tryout, "updated_at": get_wita()}
-            for key in ["judul", "jumlah_soal", "durasi", "max_attempt", "visibility"]:
-                value = payload.get(key)
-                if value is not None:
-                    fields.append(f"{key} = :{key}")
-                    params[key] = value
-                    
-            start_date = payload.get("access_start_date")
-            end_date = payload.get("access_end_date")
+            params = {
+                "id_tryout": id_tryout,
+                "updated_at": get_wita()
+            }
 
-            if start_date is not None or end_date is not None:
-                start_at, end_at = normalize_access_period(start_date, end_date)
-                # update hanya jika dikirim
-                if start_date is not None:
-                    fields.append("access_start_at = :access_start_at")
-                    params["access_start_at"] = start_at
-                if end_date is not None:
-                    fields.append("access_end_at = :access_end_at")
-                    params["access_end_at"] = end_at
+            # 2️⃣ Field standar
+            for key in ["judul", "jumlah_soal", "durasi", "max_attempt", "visibility"]:
+                if payload.get(key) is not None:
+                    fields.append(f"{key} = :{key}")
+                    params[key] = payload[key]
+
+            # 3️⃣ Ambil tanggal lama
+            old_start_date = old["access_start_at"].date() if old["access_start_at"] else None
+            old_end_date = old["access_end_at"].date() if old["access_end_at"] else None
+
+            # 4️⃣ START TIME
+            if payload.get("access_start_date") or payload.get("access_start_time"):
+                start_date = payload.get("access_start_date")
+                start_time = payload.get("access_start_time")
+
+                if not start_date and old_start_date:
+                    start_date = old_start_date.strftime("%Y-%m-%d")
+
+                start_at = normalize_access_datetime(start_date, start_time, is_end=False)
+                fields.append("access_start_at = :access_start_at")
+                params["access_start_at"] = start_at
+
+            # 5️⃣ END TIME
+            if payload.get("access_end_date") or payload.get("access_end_time"):
+                end_date = payload.get("access_end_date")
+                end_time = payload.get("access_end_time")
+
+                if not end_date and old_end_date:
+                    end_date = old_end_date.strftime("%Y-%m-%d")
+
+                end_at = normalize_access_datetime(end_date, end_time, is_end=True)
+                fields.append("access_end_at = :access_end_at")
+                params["access_end_at"] = end_at
+
+            # 6️⃣ Validasi logis
+            new_start = params.get("access_start_at", old["access_start_at"])
+            new_end = params.get("access_end_at", old["access_end_at"])
+
+            if new_start and new_end and new_start >= new_end:
+                return {
+                    "success": False,
+                    "message": "Waktu mulai akses tidak boleh melebihi atau sama dengan waktu akhir"
+                }
 
             if not fields:
                 return {"success": False, "message": "Tidak ada data yang diubah"}
 
+            # 7️⃣ Update
             q_update = text(f"""
                 UPDATE tryout
                 SET {', '.join(fields)}, updated_at = :updated_at
