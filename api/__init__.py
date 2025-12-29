@@ -24,6 +24,7 @@ from .modul import modul_ns
 from .materi import materi_ns
 from .komentarmateri import komentarmateri_ns
 from .forum import forum_ns
+from .upload import upload_ns
 from .tryout import tryout_ns
 from .soaltryout import soaltryout_ns
 from .hasiltryout import hasiltryout_ns
@@ -94,6 +95,7 @@ restx_api.add_namespace(modul_ns, path="/modul")
 restx_api.add_namespace(materi_ns, path="/materi")
 restx_api.add_namespace(komentarmateri_ns, path="/komentar")
 restx_api.add_namespace(forum_ns, path="/forum")
+restx_api.add_namespace(upload_ns, path="/upload")
 restx_api.add_namespace(tryout_ns, path="/tryout")
 restx_api.add_namespace(soaltryout_ns, path="/soal-tryout")
 restx_api.add_namespace(hasiltryout_ns, path="/hasil-tryout")
