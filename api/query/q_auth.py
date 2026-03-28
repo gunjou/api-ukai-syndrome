@@ -52,31 +52,46 @@ def get_login(payload):
     
 def get_login_web(payload):
     engine = get_connection()
+
     try:
         with engine.begin() as connection:
-            # 🔎 Ambil data user dulu (tanpa join ke kelas)
+
+            # 🔎 Cari user TANPA filter status dulu
             user = connection.execute(
                 text("""
-                    SELECT u.id_user, u.nama, u.nickname, u.email, u.password, u.kode_pemulihan, u.role, u.status
+                    SELECT 
+                        u.id_user, u.nama, u.nickname, u.email,
+                        u.password, u.kode_pemulihan, u.role, u.status
                     FROM users u
                     WHERE u.email = :email
-                    AND u.status = 1
                     LIMIT 1;
                 """),
                 {"email": payload['email']}
             ).mappings().fetchone()
 
-            if not user or not user['password']:
-                return None
+            # ❌ Email tidak ditemukan
+            if not user:
+                return {"error": "EMAIL_NOT_FOUND"}
 
+            # ❌ Akun tidak aktif
+            if user["status"] != 1:
+                return {"error": "ACCOUNT_INACTIVE"}
+
+            # ❌ Password kosong di DB
+            if not user['password']:
+                return {"error": "INVALID_PASSWORD"}
+
+            # ❌ Validasi password
             if user['kode_pemulihan'] != payload['password']:
                 if not check_password_hash(user['password'], payload['password']):
-                    return None
+                    return {"error": "INVALID_PASSWORD"}
 
+            # ===============================
+            # Ambil kelas (mentor/peserta)
+            # ===============================
             id_paketkelas = None
             nama_kelas = None
 
-            # 🔑 Kalau role = mentor → ambil dari mentorkelas
             if user['role'] == "mentor":
                 kelas = connection.execute(
                     text("""
@@ -90,11 +105,11 @@ def get_login_web(payload):
                     """),
                     {"id_user": user['id_user']}
                 ).mappings().fetchone()
+
                 if kelas:
                     id_paketkelas = kelas['id_paketkelas']
                     nama_kelas = kelas['nama_kelas']
 
-            # 🔑 Kalau role = peserta → ambil dari pesertakelas
             elif user['role'] == "peserta":
                 kelas = connection.execute(
                     text("""
@@ -108,34 +123,35 @@ def get_login_web(payload):
                     """),
                     {"id_user": user['id_user']}
                 ).mappings().fetchone()
+
                 if kelas:
                     id_paketkelas = kelas['id_paketkelas']
                     nama_kelas = kelas['nama_kelas']
 
-            # 🔑 Kalau role = admin → tidak terikat kelas
-            elif user['role'] == "admin":
-                id_paketkelas = None
-                nama_kelas = None
-
-            # === JWT & Session Handling ===
+            # ===============================
+            # JWT GENERATION
+            # ===============================
             if user['role'] in ["admin", "mentor"]:
                 access_token = create_access_token(
                     identity=str(user['id_user']),
                     additional_claims={
-                        "role": user['role'],
-                        # "id_paketkelas": id_paketkelas
+                        "role": user['role']
                     }
                 )
+
                 return {
-                    'access_token': access_token,
-                    'message': 'login success',
-                    'id_user': user['id_user'],
-                    'nama': user['nama'],
-                    'nickname': user['nickname'],
-                    'email': user['email'],
-                    'role': user['role'],
-                    'id_paketkelas': id_paketkelas,
-                    'nama_kelas': nama_kelas
+                    "success": True,
+                    "data": {
+                        'access_token': access_token,
+                        'message': 'login success',
+                        'id_user': user['id_user'],
+                        'nama': user['nama'],
+                        'nickname': user['nickname'],
+                        'email': user['email'],
+                        'role': user['role'],
+                        'id_paketkelas': id_paketkelas,
+                        'nama_kelas': nama_kelas
+                    }
                 }
 
             elif user['role'] == "peserta":
@@ -151,7 +167,7 @@ def get_login_web(payload):
                     }
                 )
 
-                # Cek apakah sudah ada session lama
+                # session handling (tetap)
                 old_session = connection.execute(
                     text("""
                         SELECT id_session FROM sessions
@@ -180,7 +196,8 @@ def get_login_web(payload):
                 else:
                     connection.execute(
                         text("""
-                            INSERT INTO sessions (id_user, device_type, session_id, jwt_token, status, created_at, updated_at)
+                            INSERT INTO sessions 
+                            (id_user, device_type, session_id, jwt_token, status, created_at, updated_at)
                             VALUES (:id_user, 'web', :session_id, :jwt_token, 1, NOW(), NOW())
                         """),
                         {
@@ -191,20 +208,22 @@ def get_login_web(payload):
                     )
 
                 return {
-                    'access_token': access_token,
-                    'message': 'login success',
-                    'id_user': user['id_user'],
-                    'nama': user['nama'],
-                    'email': user['email'],
-                    'role': user['role'],
-                    'id_paketkelas': id_paketkelas,
-                    'nama_kelas': nama_kelas
+                    "success": True,
+                    "data": {
+                        'access_token': access_token,
+                        'message': 'login success',
+                        'id_user': user['id_user'],
+                        'nama': user['nama'],
+                        'email': user['email'],
+                        'role': user['role'],
+                        'id_paketkelas': id_paketkelas,
+                        'nama_kelas': nama_kelas
+                    }
                 }
 
-        return None
     except SQLAlchemyError as e:
         print(f"[get_login_web] Error: {str(e)}")
-        return {'msg': 'Internal server error'}
+        return {"error": "SERVER_ERROR"}
 
     
 def get_login_mobile(payload):

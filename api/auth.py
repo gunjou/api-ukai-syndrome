@@ -17,8 +17,8 @@ from .utils.blacklist_store import blacklist
 auth_ns = Namespace('auth', description='Endpoint Autentikasi Admin, Mentor dan Peserta')
 
 login_model = auth_ns.model('Login', {
-    'email': fields.String(required=True, description="email"),
-    'password': fields.String(required=True, description="password")
+    'email': fields.String(required=True, description="email", example="coba@email.com"),
+    'password': fields.String(required=True, description="password", example="123456")
 })
 
 logout_model = auth_ns.model('Logout', {
@@ -84,20 +84,34 @@ class LoginAdminResource(Resource):
 class LoginWebResource(Resource):
     @auth_ns.expect(login_model)
     def post(self):
-        """Login khusus untuk web (admin/mentor/peserta), email + password"""
         payload = request.get_json()
 
         if not payload.get('email') or not payload.get('password'):
             return {'status': "Fields can't be blank"}, 400
 
-        try:
-            get_jwt_response = get_login_web(payload)
-            if get_jwt_response is None:
-                return {'status': "Invalid email or password"}, 401
-            return get_jwt_response, 200
-        except SQLAlchemyError as e:
-            auth_ns.logger.error(f"Database error: {str(e)}")
-            return {'status': "Internal server error"}, 500
+        result = get_login_web(payload)
+
+        if not result:
+            return {'status': "Unknown error"}, 500
+
+        # ❌ Handle error explicit
+        if result.get("error"):
+            error_map = {
+                "EMAIL_NOT_FOUND": ("Email tidak terdaftar", 404),
+                "INVALID_PASSWORD": ("Password salah", 401),
+                "ACCOUNT_INACTIVE": ("Akun tidak aktif", 403),
+                "SERVER_ERROR": ("Internal server error", 500)
+            }
+
+            message, code = error_map.get(
+                result["error"],
+                ("Login gagal", 400)
+            )
+
+            return {"status": message}, code
+
+        # ✅ Success
+        return result["data"], 200
 
 
 @auth_ns.route('/login/mobile')
