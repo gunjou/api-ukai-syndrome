@@ -317,25 +317,55 @@ def get_materi_by_mentor(id_user):
         print(f"[get_materi_by_mentor] Error: {str(e)}")
         return []
     
-def get_materi_by_mentor_and_kelas(id_user, id_paketkelas):
+def get_materi_by_mentor_and_kelas(id_user, id_paketkelas, id_modul=None):
     engine = get_connection()
+
     try:
         with engine.connect() as conn:
-            result = conn.execute(text("""
-                SELECT m.id_materi, m.judul, m.tipe_materi, m.url_file, m.visibility, m.is_downloadable,
-                       m.id_modul, pk.id_paketkelas, pk.nama_kelas
+
+            base_query = """
+                SELECT 
+                    m.id_materi,
+                    m.judul,
+                    m.tipe_materi,
+                    m.url_file,
+                    m.visibility,
+                    m.is_downloadable,
+                    m.id_modul,
+                    pk.id_paketkelas,
+                    pk.nama_kelas
                 FROM materi m
                 JOIN modul mo ON m.id_modul = mo.id_modul
                 JOIN modulkelas mk ON mk.id_modul = mo.id_modul
-                JOIN paketkelas pk ON mk.id_paketkelas = pk.id_paketkelas AND pk.id_paketkelas = :id_paketkelas
-                JOIN mentorkelas mkls ON mkls.id_user = :id_user
-                WHERE mkls.id_paketkelas = pk.id_paketkelas
-                  AND m.status = 1
-                  AND mk.status = 1
-                  AND mkls.status = 1
-                ORDER BY mo.created_at ASC
-            """), {"id_user": id_user, "id_paketkelas": id_paketkelas}).mappings().fetchall()
+                JOIN paketkelas pk ON mk.id_paketkelas = pk.id_paketkelas
+                JOIN mentorkelas mkls ON mkls.id_paketkelas = pk.id_paketkelas
+                WHERE
+                    mkls.id_user = :id_user
+                    AND pk.id_paketkelas = :id_paketkelas
+                    AND m.status = 1
+                    AND mk.status = 1
+                    AND mkls.status = 1
+            """
+
+            params = {
+                "id_user": id_user,
+                "id_paketkelas": id_paketkelas
+            }
+
+            # 🔥 FILTER MODUL (opsional)
+            if id_modul:
+                base_query += " AND m.id_modul = :id_modul"
+                params["id_modul"] = id_modul
+
+            base_query += " ORDER BY mo.created_at ASC"
+
+            result = conn.execute(
+                text(base_query),
+                params
+            ).mappings().fetchall()
+
             return [dict(row) for row in result]
+
     except SQLAlchemyError as e:
         print(f"[get_materi_by_mentor] Error: {str(e)}")
         return []

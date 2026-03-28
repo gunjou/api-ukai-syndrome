@@ -286,17 +286,34 @@ class MateriMentorResource(Resource):
 
 @materi_ns.route('/mentor/<int:id_paketdata>')
 class MateriMentorInKelasResource(Resource):
-    # @session_required
     @jwt_required()
     @role_required('mentor')
+    @materi_ns.param('id_modul', 'Filter berdasarkan ID Modul (opsional)')
     def get(self, id_paketdata):
-        """Akses: (mentor) Melihat materi yang tersedia untuk mentor"""
+        """Akses: (mentor) Melihat materi berdasarkan kelas dan modul"""
         id_user = get_jwt_identity()
+        id_modul = request.args.get("id_modul", type=int)
+
         try:
-            result = get_materi_by_mentor_and_kelas(id_user, id_paketdata)
+            result = get_materi_by_mentor_and_kelas(
+                id_user=id_user,
+                id_paketkelas=id_paketdata,
+                id_modul=id_modul
+            )
+
             if not result:
-                return {"status": "error", "data": [], "message": "Tidak ada materi yang tersedia"}, 200
-            return {"status": "success", "total": len(result), "data": result}, 200
+                return {
+                    "status": "error",
+                    "data": [],
+                    "message": "Tidak ada materi yang tersedia"
+                }, 200
+
+            return {
+                "status": "success",
+                "total": len(result),
+                "data": result
+            }, 200
+
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
         
