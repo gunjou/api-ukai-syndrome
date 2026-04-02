@@ -4,67 +4,74 @@ from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.security import generate_password_hash
 from ..utils.config import get_connection, get_wita
 
-def get_all_mentor():
+def get_all_mentor(page=1, limit=20, search=None):
     engine = get_connection()
+    offset = (page - 1) * limit
+
     try:
         with engine.connect() as connection:
-            result = connection.execute(text("""
-                SELECT 
-                    u.id_user, u.nama, u.nickname, u.email, u.kode_pemulihan, u.password, u.no_hp, u.role,
-                    pk.id_paketkelas, pk.nama_kelas, p.id_paket, p.nama_paket, pk.deskripsi, 
-                    b.id_batch, b.nama_batch
+
+            base_query = """
                 FROM users u
                 LEFT JOIN mentorkelas mk 
                     ON u.id_user = mk.id_user AND mk.status = 1
                 LEFT JOIN paketkelas pk 
                     ON mk.id_paketkelas = pk.id_paketkelas AND pk.status = 1
-                LEFT JOIN paket p 
-                    ON p.id_paket = pk.id_paket AND p.status = 1
-                LEFT JOIN batch b 
-                    ON b.id_batch = pk.id_batch AND b.status = 1
-                WHERE u.role = 'mentor' AND u.status = 1
-                ORDER BY u.nama ASC;
-            """)).mappings().fetchall()
+                WHERE u.role = 'mentor' 
+                  AND u.status = 1
+            """
 
-            rows = [dict(row) for row in result]
-            mentors = {}
+            params = {}
 
-            for row in rows:
-                uid = row["id_user"]
-                if uid not in mentors:
-                    mentors[uid] = {
-                        "id_user": row["id_user"],
-                        "nama": row["nama"],
-                        "nickname": row["nickname"],
-                        "email": row["email"],
-                        "kode_pemulihan": row["kode_pemulihan"],
-                        "password": row["password"],
-                        "no_hp": row["no_hp"],
-                        "role": row["role"],
-                        "total_kelas": 0,
-                        "paketkelas": []  # kumpulan kelas
-                    }
+            # 🔍 SEARCH
+            if search:
+                base_query += """
+                AND (u.nama ILIKE :search OR u.email ILIKE :search)
+                """
+                params["search"] = f"%{search}%"
 
-                # Kalau ada kelas yang valid, tambahkan ke list
-                if row["id_paketkelas"]:
-                    mentors[uid]["paketkelas"].append({
-                        "id_paketkelas": row["id_paketkelas"],
-                        "nama_kelas": row["nama_kelas"],
-                        "id_paket": row["id_paket"],
-                        "nama_paket": row["nama_paket"],
-                        "deskripsi": row["deskripsi"],
-                        "id_batch": row["id_batch"],
-                        "nama_batch": row["nama_batch"]
-                    })
+            # 🔹 DATA QUERY
+            data_query = text(f"""
+                SELECT 
+                    u.id_user,
+                    u.nama,
+                    u.nickname,
+                    u.email,
+                    u.no_hp,
+                    u.role,
+                    COUNT(DISTINCT pk.id_paketkelas) AS total_kelas
+                {base_query}
+                GROUP BY 
+                    u.id_user, u.nama, u.nickname, u.email, u.no_hp, u.role
+                ORDER BY u.nama ASC
+                LIMIT :limit OFFSET :offset
+            """)
 
-            # Hitung total kelas per mentor
-            for mentor in mentors.values():
-                mentor["total_kelas"] = len(mentor["paketkelas"])
+            params.update({
+                "limit": limit,
+                "offset": offset
+            })
 
-            return list(mentors.values())
+            data = connection.execute(data_query, params).mappings().fetchall()
+
+            # 🔹 COUNT TOTAL MENTOR (bukan jumlah kelas!)
+            count_query = text(f"""
+                SELECT COUNT(DISTINCT u.id_user)
+                {base_query}
+            """)
+
+            total = connection.execute(count_query, params).scalar()
+
+            return {
+                "data": [dict(row) for row in data],
+                "total": total,
+                "page": page,
+                "limit": limit
+            }
+
     except SQLAlchemyError as e:
         print(f"Error occurred: {str(e)}")
-        return []
+        return None
 
 def insert_mentor(payload):
     engine = get_connection()

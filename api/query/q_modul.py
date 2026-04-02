@@ -33,45 +33,66 @@ def is_valid_paketkelas(id_paketkelas):
         return False
 
 """=== CRUD ==="""
-def get_all_modul_admin():
+def get_all_modul_admin(search=None):
     engine = get_connection()
+
     try:
         with engine.connect() as conn:
-            result = conn.execute(text("""
-                SELECT m.id_modul, m.judul, m.deskripsi, m.owner, m.visibility, m.status,
-                       pk.id_paketkelas, pk.nama_kelas
+
+            base_query = """
                 FROM modul m
                 LEFT JOIN modulkelas mkls 
-                    ON mkls.id_modul = m.id_modul AND mkls.status = 1
+                    ON mkls.id_modul = m.id_modul 
+                   AND mkls.status = 1
                 LEFT JOIN paketkelas pk 
-                    ON mkls.id_paketkelas = pk.id_paketkelas AND pk.status = 1
+                    ON pk.id_paketkelas = mkls.id_paketkelas 
+                   AND pk.status = 1
                 WHERE m.status = 1
-                ORDER BY m.id_modul, pk.nama_kelas
-            """)).mappings().fetchall()
+            """
 
-            modul_dict = {}
-            for row in result:
-                id_modul = row["id_modul"]
-                if id_modul not in modul_dict:
-                    modul_dict[id_modul] = {
-                        "id_modul": row["id_modul"],
-                        "judul": row["judul"],
-                        "deskripsi": row["deskripsi"],
-                        "owner": row["owner"],
-                        "visibility": row["visibility"],
-                        "status": row["status"],
-                        "paketkelas": []
-                    }
-                # hanya append kalau ada paketkelas valid
-                if row["id_paketkelas"]:
-                    modul_dict[id_modul]["paketkelas"].append({
-                        "id_paketkelas": row["id_paketkelas"],
-                        "nama_kelas": row["nama_kelas"]
-                    })
+            params = {}
 
-            for modul in modul_dict.values():
-                modul["total_kelas"] = len(modul["paketkelas"])
-            return list(modul_dict.values())
+            # 🔍 SEARCH (opsional)
+            if search:
+                base_query += """
+                AND m.judul ILIKE :search
+                """
+                params["search"] = f"%{search}%"
+
+            query = text(f"""
+                SELECT 
+                    m.id_modul,
+                    m.judul,
+                    m.deskripsi,
+                    m.owner,
+                    m.visibility,
+                    m.status,
+
+                    COUNT(DISTINCT pk.id_paketkelas) AS total_kelas
+
+                {base_query}
+
+                GROUP BY 
+                    m.id_modul,
+                    m.judul,
+                    m.deskripsi,
+                    m.owner,
+                    m.visibility,
+                    m.status
+
+                ORDER BY m.id_modul ASC
+            """)
+
+            result = conn.execute(query, params).mappings().fetchall()
+
+            return [
+                {
+                    **dict(row),
+                    "total_kelas": int(row["total_kelas"])
+                }
+                for row in result
+            ]
+
     except SQLAlchemyError as e:
         print(f"DB Error: {e}")
         return []

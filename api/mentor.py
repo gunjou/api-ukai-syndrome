@@ -1,7 +1,7 @@
 import random
 import string
 from flask import logging, request
-from flask_restx import Namespace, Resource, fields
+from flask_restx import Namespace, Resource, fields, reqparse
 from email_validator import validate_email, EmailNotValidError
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -18,18 +18,44 @@ mentor_model = mentor_ns.model("Mentor", {
     "id_paketkelas": fields.Integer(required=False, description="ID kelas yang diampu (opsional)")
 })
 
+mentor_parser = reqparse.RequestParser()
+mentor_parser.add_argument('page', type=int, default=1, help='Halaman')
+mentor_parser.add_argument('limit', type=int, default=20, help='Jumlah data per halaman')
+mentor_parser.add_argument('search', type=str, required=False, help='Search nama/email')
+
 @mentor_ns.route('')
 class MentorListResource(Resource):
+
+    @mentor_ns.expect(mentor_parser)
     @role_required('admin')
     def get(self):
-        """Akses: (admin), Mengambil list semua mentor + kelas"""
+        """Akses: (admin), List mentor + total kelas + pagination + search"""
+
         try:
-            result = get_all_mentor()
-            if not result:
-                return {'status': 'error', 'message': 'Tidak ada mentor yang ditemukan'}, 404
-            return result, 200
-        except SQLAlchemyError as e:
-            logging.error(f"Database error: {str(e)}")
+            args = mentor_parser.parse_args()
+
+            page = args.get("page")
+            limit = args.get("limit")
+            search = args.get("search")
+
+            result = get_all_mentor(page, limit, search)
+
+            if not result or not result["data"]:
+                return {'status': 'error', 'message': 'Tidak ada mentor ditemukan'}, 404
+
+            return {
+                "status": "success",
+                "data": result["data"],
+                "meta": {
+                    "total": result["total"],
+                    "page": result["page"],
+                    "limit": result["limit"],
+                    "total_page": (result["total"] + limit - 1) // limit
+                }
+            }, 200
+
+        except Exception as e:
+            print(f"Error: {str(e)}")
             return {'status': "Internal server error"}, 500
 
     # @session_required

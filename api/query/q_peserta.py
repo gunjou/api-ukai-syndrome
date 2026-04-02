@@ -1,6 +1,7 @@
 import random
 import re
 import string
+import time
 from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -43,40 +44,87 @@ def get_all_peserta():
         print(f"Error occurred: {str(e)}")
         return []
     
-def get_all_peserta_aktif():
+    
+def get_all_peserta_aktif(page=1, limit=20, search=None, id_batch=None):
     engine = get_connection()
+    offset = (page - 1) * limit
+
+    start_time = time.time()
+
     try:
         with engine.connect() as connection:
-            result = connection.execute(text("""
-                SELECT 
-                    u.id_user, u.nama, u.email, u.no_hp, u.password, u.kode_pemulihan, u.role,
-                    b.nama_batch, b.tanggal_mulai, b.tanggal_selesai, ub.tanggal_join, ub.status_enroll,
-                    pk.nama_kelas, pk.id_paketkelas, pk.id_batch, p.id_paket, p.nama_paket
+
+            base_query = """
                 FROM users u
                 LEFT JOIN userbatch ub 
-                    ON ub.id_user = u.id_user 
-                    AND ub.status = 1
+                    ON ub.id_user = u.id_user AND ub.status = 1
                 LEFT JOIN batch b 
-                    ON b.id_batch = ub.id_batch 
-                   AND b.status = 1
+                    ON b.id_batch = ub.id_batch AND b.status = 1
                 LEFT JOIN pesertakelas pkls 
-                    ON pkls.id_user = u.id_user 
-                   AND pkls.status = 1
+                    ON pkls.id_user = u.id_user AND pkls.status = 1
                 LEFT JOIN paketkelas pk 
-                    ON pk.id_paketkelas = pkls.id_paketkelas 
-                   AND pk.status = 1
+                    ON pk.id_paketkelas = pkls.id_paketkelas AND pk.status = 1
                 LEFT JOIN paket p 
                     ON p.id_paket = pk.id_paket AND p.status = 1
                 WHERE u.role = 'peserta'
-                  AND u.status = 1
-                  AND u.nama IS NOT NULL
-                  AND b.id_batch IS NOT NULL;
-            """)).mappings().fetchall()
+                    AND u.status = 1
+            """
+                #   AND u.nama IS NOT NULL
+                #   AND b.id_batch IS NOT NULL
 
-            return [serialize_row(row) for row in result]
+            params = {}
+
+            # 🔍 Search
+            if search:
+                base_query += """
+                AND (u.nama ILIKE :search OR u.email ILIKE :search)
+                """
+                params["search"] = f"%{search}%"
+
+            # 📦 Filter Batch
+            if id_batch:
+                base_query += """
+                AND b.id_batch = :id_batch
+                """
+                params["id_batch"] = id_batch
+
+            # 🔹 DATA QUERY
+            data_query = text(f"""
+                SELECT 
+                    u.id_user, u.nama, u.email, u.kode_pemulihan, u.no_hp,
+                    b.nama_batch, b.tanggal_mulai, b.tanggal_selesai, 
+                    ub.tanggal_join, ub.status_enroll,
+                    pk.nama_kelas, pk.id_paketkelas, pk.id_batch, 
+                    p.id_paket, p.nama_paket
+                {base_query}
+                ORDER BY u.id_user DESC
+                LIMIT :limit OFFSET :offset
+            """)
+
+            params.update({
+                "limit": limit,
+                "offset": offset
+            })
+
+            data = connection.execute(data_query, params).mappings().fetchall()
+
+            # 🔹 COUNT
+            count_query = text(f"SELECT COUNT(*) {base_query}")
+            total = connection.execute(count_query, params).scalar()
+
+            execution_time = round((time.time() - start_time) * 1000, 2)  # ms
+
+            return {
+                "data": [serialize_row(row) for row in data],
+                "total": total,
+                "page": page,
+                "limit": limit,
+                "execution_time_ms": execution_time
+            }
+
     except SQLAlchemyError as e:
         print(f"Error occurred: {str(e)}")
-        return []
+        return None
 
 def get_all_peserta_public():
     engine = get_connection()

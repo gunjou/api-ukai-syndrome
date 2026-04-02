@@ -115,24 +115,79 @@ def is_user_have_access_to_materi(id_user, id_materi, role, id_paketkelas):
 
 
 """#=== CRUD ===#"""
-def get_all_materi():
+def get_all_materi(page=1, limit=20, search=None):
     engine = get_connection()
+    offset = (page - 1) * limit
+
     try:
         with engine.connect() as conn:
-            result = conn.execute(text("""
-                SELECT m.id_materi, m.id_owner, u.nickname as owner, m.id_modul, m.tipe_materi, m.judul, m.url_file,
-                       m.visibility, m.is_downloadable, m.status, m.created_at, m.updated_at,
-                       mo.judul AS judul_modul
+
+            base_query = """
                 FROM materi m
-                JOIN modul mo ON m.id_modul = mo.id_modul AND mo.status = 1
-                LEFT JOIN users u ON m.id_owner = u.id_user AND u.status = 1
+                JOIN modul mo 
+                    ON m.id_modul = mo.id_modul 
+                   AND mo.status = 1
+                LEFT JOIN users u 
+                    ON m.id_owner = u.id_user 
+                   AND u.status = 1
                 WHERE m.status = 1
+            """
+
+            params = {}
+
+            # 🔍 SEARCH (opsional)
+            if search:
+                base_query += """
+                AND m.judul ILIKE :search
+                """
+                params["search"] = f"%{search}%"
+
+            # 🔹 DATA QUERY
+            data_query = text(f"""
+                SELECT 
+                    m.id_materi, 
+                    m.id_owner, 
+                    u.nickname as owner, 
+                    m.id_modul, 
+                    m.tipe_materi, 
+                    m.judul, 
+                    m.url_file,
+                    m.visibility, 
+                    m.is_downloadable, 
+                    m.status, 
+                    m.created_at, 
+                    m.updated_at,
+                    mo.judul AS judul_modul
+                {base_query}
                 ORDER BY m.created_at DESC
-            """)).mappings().fetchall()
-            return [serialize_row(row) for row in result]
+                LIMIT :limit OFFSET :offset
+            """)
+
+            params.update({
+                "limit": limit,
+                "offset": offset
+            })
+
+            data = conn.execute(data_query, params).mappings().fetchall()
+
+            # 🔹 COUNT QUERY (TOTAL DATA)
+            count_query = text(f"""
+                SELECT COUNT(m.id_materi)
+                {base_query}
+            """)
+
+            total = conn.execute(count_query, params).scalar()
+
+            return {
+                "data": [serialize_row(row) for row in data],
+                "total": total,
+                "page": page,
+                "limit": limit
+            }
+
     except SQLAlchemyError as e:
         print(f"Error: {e}")
-        return []
+        return None
 
 def get_old_materi_by_id(id_materi):
     engine = get_connection()

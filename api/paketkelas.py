@@ -1,6 +1,6 @@
 from flask import request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
-from flask_restx import Namespace, Resource, fields
+from flask_restx import Namespace, Resource, fields, reqparse
 from sqlalchemy.exc import SQLAlchemyError
 from .query.q_paketkelas import *
 from .utils.decorator import role_required, session_required
@@ -14,23 +14,46 @@ kelas_model = kelas_ns.model("Kelas", {
     "deskripsi": fields.String(required=True, description="Deskripsi kelas")
 })
 
+kelas_parser = reqparse.RequestParser()
+kelas_parser.add_argument('page', type=int, default=1, help='Halaman')
+kelas_parser.add_argument('limit', type=int, default=20, help='Jumlah data per halaman')
+kelas_parser.add_argument('search', type=str, required=False, help='Search nama kelas/batch/paket')
+
 @kelas_ns.route('')
 class KelasListResource(Resource):
-    # @session_required
+
+    @kelas_ns.expect(kelas_parser)
     @jwt_required()
     @role_required('admin')
     def get(self):
-        """Akses: (admin, mentor), Ambil semua kelas aktif untuk admin, dan yang diampu oleh mentor"""
+        """Akses: (admin), List kelas + pagination + search"""
+
         try:
-            # current_user_id = get_jwt_identity()
+            args = kelas_parser.parse_args()
 
-            result = get_kelas_by_admin()
+            page = args.get("page")
+            limit = args.get("limit")
+            search = args.get("search")
 
-            if not result:
+            result = get_kelas_by_admin(page, limit, search)
+
+            if not result or not result["data"]:
                 return {"status": "error", "message": "Tidak ada kelas ditemukan"}, 404
-            return {"data": result}, 200
-        except SQLAlchemyError as e:
-            return {"status": "error", "message": str(e)}, 500
+
+            return {
+                "status": "success",
+                "data": result["data"],
+                "meta": {
+                    "total": result["total"],
+                    "page": result["page"],
+                    "limit": result["limit"],
+                    "total_page": (result["total"] + limit - 1) // limit
+                }
+            }, 200
+
+        except Exception as e:
+            print(str(e))
+            return {"status": "error", "message": "Internal server error"}, 500
 
     # @session_required
     @role_required('admin')

@@ -76,70 +76,105 @@ def get_tryout_by_id(id_tryout: int):
         print(f"[ERROR get_tryout_by_id] {e}")
         return None
     
-def get_tryout_list_admin(id_batch=None, id_paketkelas=None):
+def get_tryout_list_admin(page=1, limit=20, search=None):
     engine = get_connection()
+    offset = (page - 1) * limit
+
     try:
         with engine.connect() as conn:
-            query = """
-                SELECT
-                    t.*,
-                    tp.id_paketkelas,
-                    pk.nama_kelas,
-                    b.id_batch,
-                    b.nama_batch
+
+            base_query = """
                 FROM tryout t
-                LEFT JOIN to_paketkelas tp ON tp.id_tryout = t.id_tryout AND tp.status = 1
-                LEFT JOIN paketkelas pk ON pk.id_paketkelas = tp.id_paketkelas AND pk.status = 1
-                LEFT JOIN batch b ON pk.id_batch = b.id_batch AND b.status = 1
                 WHERE t.status = 1
             """
+
             params = {}
 
-            if id_batch:
-                query += " AND b.id_batch = :id_batch"
-                params["id_batch"] = id_batch
+            # 🔍 SEARCH
+            if search:
+                base_query += " AND t.judul ILIKE :search"
+                params["search"] = f"%{search}%"
 
-            if id_paketkelas:
-                query += " AND pk.id_paketkelas = :id_paketkelas"
-                params["id_paketkelas"] = id_paketkelas
+            # 🔹 DATA QUERY
+            data_query = text(f"""
+                SELECT 
+                    t.*,
 
-            query += " ORDER BY t.created_at DESC"
+                    (
+                        SELECT COUNT(*)
+                        FROM to_paketkelas tp
+                        WHERE tp.id_tryout = t.id_tryout
+                          AND tp.status = 1
+                    ) AS total_kelas
 
-            result = conn.execute(text(query), params).mappings().fetchall()
+                {base_query}
+                ORDER BY t.created_at DESC
+                LIMIT :limit OFFSET :offset
+            """)
+
+            params.update({
+                "limit": limit,
+                "offset": offset
+            })
+
+            result = conn.execute(data_query, params).mappings().fetchall()
+
             processed = []
             for row in result:
-                row_dict = dict(row)  # ubah RowMapping ke dict biasa
+                row_dict = dict(row)
 
-                # ⬅️ PECAH DATETIME DI SINI (SEBELUM SERIALIZE)
                 enrich_datetime_fields(row_dict, "access_start_at")
                 enrich_datetime_fields(row_dict, "access_end_at")
 
+                row_dict["total_kelas"] = int(row_dict["total_kelas"])
+
                 processed.append(serialize_row(row_dict))
 
-            raw_data = processed
+            # 🔹 COUNT QUERY
+            count_query = text(f"""
+                SELECT COUNT(t.id_tryout)
+                {base_query}
+            """)
 
-            # Gabungkan berdasarkan id_tryout
-            tryout_map = {}
-            for row in raw_data:
-                id_tryout = row['id_tryout']
-                if id_tryout not in tryout_map:
-                    # Salin data dasar + inisialisasi array
-                    tryout_map[id_tryout] = {
-                        **{k: v for k, v in row.items() if k not in ['id_paketkelas', 'nama_kelas']},
-                        "id_paketkelas": [],
-                        "nama_kelas": [],
-                    }
+            total = conn.execute(count_query, params).scalar()
 
-                # Tambahkan id_paketkelas & nama_kelas jika belum ada
-                if row['id_paketkelas'] not in tryout_map[id_tryout]['id_paketkelas']:
-                    tryout_map[id_tryout]['id_paketkelas'].append(row['id_paketkelas'])
-                if row['nama_kelas'] not in tryout_map[id_tryout]['nama_kelas']:
-                    tryout_map[id_tryout]['nama_kelas'].append(row['nama_kelas'])
-
-            return list(tryout_map.values())
+            return {
+                "data": processed,
+                "total": total,
+                "page": page,
+                "limit": limit
+            }
 
     except SQLAlchemyError as e:
         print(f"[ERROR get_tryout_list_admin] {e}")
+        return None
+    
+def get_paketkelas_by_tryout(id_tryout):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT 
+                    pk.id_paketkelas,
+                    pk.nama_kelas,
+                    b.id_batch,
+                    b.nama_batch
+                FROM to_paketkelas tp
+                JOIN paketkelas pk 
+                    ON pk.id_paketkelas = tp.id_paketkelas 
+                   AND pk.status = 1
+                JOIN batch b 
+                    ON b.id_batch = pk.id_batch 
+                   AND b.status = 1
+                WHERE tp.id_tryout = :id_tryout
+                  AND tp.status = 1
+            """), {"id_tryout": id_tryout}).mappings().fetchall()
+
+            return [dict(row) for row in result]
+
+    except SQLAlchemyError as e:
+        print(f"[ERROR get_paketkelas_by_tryout] {e}")
         return []
 
 def insert_new_tryout(payload):

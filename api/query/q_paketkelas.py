@@ -5,38 +5,34 @@ from ..utils.helper import serialize_row
 from ..utils.config import get_connection, get_wita
 
 
-def get_kelas_by_admin():
+def get_kelas_by_admin(page=1, limit=20, search=None):
     engine = get_connection()
+    offset = (page - 1) * limit
+
     try:
         with engine.connect() as conn:
-            query = """
-                SELECT pk.id_paketkelas, pk.nama_kelas, pk.deskripsi, pk.id_user, u.nama as wali_kelas,
-                       b.id_batch, b.nama_batch, p.id_paket, p.nama_paket,
-                       COALESCE(tp.total_peserta, 0) AS total_peserta,
-                       COALESCE(tm.total_mentor, 0) AS total_mentor,
-                       COALESCE(tmd.total_modul, 0) AS total_modul
+
+            base_query = """
                 FROM paketkelas pk
                 JOIN batch b ON pk.id_batch = b.id_batch AND b.status = 1
                 JOIN paket p ON pk.id_paket = p.id_paket AND p.status = 1
                 LEFT JOIN users u ON pk.id_user = u.id_user AND u.status = 1 AND u.role = 'mentor'
 
-                -- Hitung peserta aktif
+                -- peserta
                 LEFT JOIN (
-                    SELECT pk.id_paketkelas, COUNT(*) AS total_peserta
+                    SELECT ps.id_paketkelas, COUNT(*) AS total_peserta
                     FROM pesertakelas ps
-                    JOIN paketkelas pk ON pk.id_paketkelas = ps.id_paketkelas AND pk.status = 1
                     JOIN users u ON u.id_user = ps.id_user 
                                 AND u.status = 1 
                                 AND u.role = 'peserta'
                     WHERE ps.status = 1
-                    GROUP BY pk.id_paketkelas
+                    GROUP BY ps.id_paketkelas
                 ) tp ON pk.id_paketkelas = tp.id_paketkelas
 
-                -- Hitung mentor aktif
+                -- mentor
                 LEFT JOIN (
                     SELECT mk.id_paketkelas, COUNT(*) AS total_mentor
                     FROM mentorkelas mk
-                    JOIN paketkelas pk ON pk.id_paketkelas = mk.id_paketkelas AND pk.status = 1
                     JOIN users u ON u.id_user = mk.id_user 
                                 AND u.status = 1 
                                 AND u.role = 'mentor'
@@ -44,32 +40,88 @@ def get_kelas_by_admin():
                     GROUP BY mk.id_paketkelas
                 ) tm ON pk.id_paketkelas = tm.id_paketkelas
 
-                -- Hitung modul aktif
+                -- modul
                 LEFT JOIN (
                     SELECT mk.id_paketkelas, COUNT(*) AS total_modul
                     FROM modulkelas mk
                     JOIN modul m ON m.id_modul = mk.id_modul AND m.status = 1
-                    JOIN paketkelas pk ON pk.id_paketkelas = mk.id_paketkelas AND pk.status = 1
                     WHERE mk.status = 1
                     GROUP BY mk.id_paketkelas
                 ) tmd ON pk.id_paketkelas = tmd.id_paketkelas
 
                 WHERE pk.status = 1
-                ORDER BY pk.nama_kelas ASC
             """
-            result = conn.execute(text(query)).mappings().fetchall()
-            return [
-                {
-                    **dict(row),
-                    "total_peserta": int(row["total_peserta"]),
-                    "total_mentor": int(row["total_mentor"]),
-                    "total_modul": int(row["total_modul"]),
-                }
-                for row in result
-            ]
+
+            params = {}
+
+            # 🔍 SEARCH
+            if search:
+                base_query += """
+                AND (
+                    pk.nama_kelas ILIKE :search OR
+                    b.nama_batch ILIKE :search OR
+                    p.nama_paket ILIKE :search
+                )
+                """
+                params["search"] = f"%{search}%"
+
+            # 🔹 DATA QUERY
+            data_query = text(f"""
+                SELECT 
+                    pk.id_paketkelas, 
+                    pk.nama_kelas, 
+                    pk.deskripsi, 
+                    pk.id_user, 
+                    u.nama as wali_kelas,
+                    b.id_batch, 
+                    b.nama_batch, 
+                    p.id_paket, 
+                    p.nama_paket,
+                    COALESCE(tp.total_peserta, 0) AS total_peserta,
+                    COALESCE(tm.total_mentor, 0) AS total_mentor,
+                    COALESCE(tmd.total_modul, 0) AS total_modul
+                {base_query}
+                ORDER BY pk.nama_kelas ASC
+                LIMIT :limit OFFSET :offset
+            """)
+
+            params.update({
+                "limit": limit,
+                "offset": offset
+            })
+
+            data = conn.execute(data_query, params).mappings().fetchall()
+
+            # 🔹 COUNT (jumlah kelas, bukan join)
+            count_query = text(f"""
+                SELECT COUNT(pk.id_paketkelas)
+                FROM paketkelas pk
+                JOIN batch b ON pk.id_batch = b.id_batch AND b.status = 1
+                JOIN paket p ON pk.id_paket = p.id_paket AND p.status = 1
+                WHERE pk.status = 1
+                {"AND (pk.nama_kelas ILIKE :search OR b.nama_batch ILIKE :search OR p.nama_paket ILIKE :search)" if search else ""}
+            """)
+
+            total = conn.execute(count_query, params).scalar()
+
+            return {
+                "data": [
+                    {
+                        **dict(row),
+                        "total_peserta": int(row["total_peserta"]),
+                        "total_mentor": int(row["total_mentor"]),
+                        "total_modul": int(row["total_modul"]),
+                    }
+                    for row in data
+                ],
+                "total": total,
+                "page": page,
+                "limit": limit
+            }
+
     except SQLAlchemyError as e:
         print(f"[get_kelas_by_admin] Database error: {e}")
-        return []
+        return None
     
 def get_kelas_by_mentor(id_user):
     engine = get_connection()

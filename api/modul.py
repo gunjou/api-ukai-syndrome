@@ -1,6 +1,6 @@
 from flask import request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
-from flask_restx import Namespace, Resource, fields
+from flask_restx import Namespace, Resource, fields, reqparse
 from sqlalchemy.exc import SQLAlchemyError
 from .utils.decorator import role_required, session_required
 from .query.q_modul import *
@@ -24,26 +24,37 @@ visibility_model = modul_ns.model("ModulVisibility", {
     "visibility": fields.String(required=True, description="Nilai visibility (open/hold/close)")
 })
 
+modul_parser = reqparse.RequestParser()
+modul_parser.add_argument('search', type=str, required=False, help='Search judul modul')
+
 @modul_ns.route('')
 class ModulListResource(Resource):
-    # @session_required
+    @modul_ns.expect(modul_parser)
     @role_required(['admin', 'mentor'])
     def get(self):
-        """Akses: (admin/mentor), Ambil semua modul"""
+        """Akses: (admin/mentor), Ambil semua modul + search"""
         id_user = get_jwt_identity()
         role = get_jwt()['role']
         try:
+            args = modul_parser.parse_args()
+            search = args.get("search")
             if role == 'admin':
-                result = get_all_modul_admin()
+                result = get_all_modul_admin(search)
             else:
-                result = get_all_modul_by_mentor(id_user)
-
+                result = get_all_modul_by_mentor(id_user)  # bisa kamu upgrade nanti
             if not result:
                 return {"status": "error", "message": "Tidak ada modul ditemukan"}, 404
-            return {"data": result}, 200
-        except SQLAlchemyError as e:
-            return {"status": "error", "message": str(e)}, 500
-
+            return {
+                "status": "success",
+                "data": result,
+                "meta": {
+                    "total": len(result)
+                }
+            }, 200
+        except Exception as e:
+            print(str(e))
+            return {"status": "error", "message": "Internal server error"}, 500
+        
 
     # @session_required
     @role_required('admin')

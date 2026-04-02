@@ -1,6 +1,6 @@
 from flask import request
 from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
-from flask_restx import Namespace, Resource, fields
+from flask_restx import Namespace, Resource, fields, reqparse
 from sqlalchemy.exc import SQLAlchemyError
 
 from .utils.helper import generate_judul, normalize_bool_to_int
@@ -40,19 +40,45 @@ downloadable_model = materi_ns.model("ModulDownloadable", {
     "is_downloadable": fields.Integer(required=True, description="Status downloadable (1 / 0)")
 })
 
+materi_parser = reqparse.RequestParser()
+materi_parser.add_argument('page', type=int, default=1, help='Halaman')
+materi_parser.add_argument('limit', type=int, default=20, help='Jumlah data per halaman')
+materi_parser.add_argument('search', type=str, required=False, help='Search judul materi')
+
 @materi_ns.route('')
 class MateriListResource(Resource):
-    # @session_required
+
+    @materi_ns.expect(materi_parser)
     @role_required('admin')
     def get(self):
-        """Akses: (admin), Ambil semua materi"""
+        """Akses: (admin), List materi + pagination + search"""
+
         try:
-            result = get_all_materi()
-            if not result:
+            args = materi_parser.parse_args()
+
+            page = args.get("page")
+            limit = args.get("limit")
+            search = args.get("search")
+
+            result = get_all_materi(page, limit, search)
+
+            if not result or not result["data"]:
                 return {"status": "error", "message": "Tidak ada materi ditemukan"}, 404
-            return {"data": result}, 200
-        except SQLAlchemyError as e:
-            return {"status": "error", "message": str(e)}, 500
+
+            return {
+                "status": "success",
+                "data": result["data"],
+                "meta": {
+                    "total": result["total"],
+                    "page": result["page"],
+                    "limit": result["limit"],
+                    "total_page": (result["total"] + limit - 1) // limit
+                }
+            }, 200
+
+        except Exception as e:
+            print(str(e))
+            return {"status": "error", "message": "Internal server error"}, 500
 
     # @session_required
     @role_required('admin')

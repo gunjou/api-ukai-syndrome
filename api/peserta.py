@@ -30,6 +30,12 @@ upload_peserta_parser.add_argument(
     "file", type=FileStorage, location="files", required=True, help="File peserta (CSV/XLSX) harus diunggah"
 )
 
+peserta_parser = reqparse.RequestParser()
+peserta_parser.add_argument('page', type=int, default=1, help='Halaman')
+peserta_parser.add_argument('limit', type=int, default=20, help='Jumlah data per halaman')
+peserta_parser.add_argument('search', type=str, required=False, help='Search nama/email')
+peserta_parser.add_argument('id_batch', type=int, required=False, help='Filter berdasarkan batch')
+
 @peserta_ns.route('')
 class PesertaListResource(Resource):
     # @session_required
@@ -84,34 +90,70 @@ class PesertaListResource(Resource):
 
 @peserta_ns.route('/aktif')
 class PesertaAktifListResource(Resource):
-    # @session_required
+
+    @peserta_ns.expect(peserta_parser)
     @role_required('admin')
     def get(self):
-        """Akses: (admin), Mengambil list semua peserta aktif"""
+        """Akses: (admin), List peserta aktif + pagination + search + filter batch"""
+
         try:
-            result = get_all_peserta_aktif()
-            if not result:
+            args = peserta_parser.parse_args()
+            page = args.get("page")
+            limit = args.get("limit")
+            search = args.get("search")
+            id_batch = args.get("id_batch")
+            result = get_all_peserta_aktif(page, limit, search, id_batch)
+            if not result or not result["data"]:
                 return {'status': 'error', 'message': 'Tidak ada peserta ditemukan'}, 404
-            print(len(result))
-            return result, 200
-        except SQLAlchemyError as e:
-            logging.error(f"Database error: {str(e)}")
+            return {
+                "status": "success",
+                "data": result["data"],
+                "meta": {
+                    "total": result["total"],
+                    "page": result["page"],
+                    "limit": result["limit"],
+                    "total_page": (result["total"] + limit - 1) // limit,
+                    "execution_time_ms": result["execution_time_ms"]
+                }
+            }, 200
+        except Exception as e:
+            logging.error(f"Error: {str(e)}")
             return {'status': "Internal server error"}, 500
         
         
 @peserta_ns.route('/public')
 class PenggunaListResource(Resource):
-    # @session_required
+
+    @peserta_ns.expect(peserta_parser)
     @role_required('admin')
     def get(self):
-        """Akses: (admin), Mengambil list semua peserta public"""
+        """Akses: (admin), Peserta public (tidak punya kelas aktif)"""
+
         try:
-            result = get_all_peserta_public()
-            if not result:
+            args = peserta_parser.parse_args()
+
+            page = args.get("page")
+            limit = args.get("limit")
+            search = args.get("search")
+
+            result = get_all_peserta_public(page, limit, search)
+
+            if not result or not result["data"]:
                 return {'status': 'error', 'message': 'Tidak ada peserta ditemukan'}, 404
-            return result, 200
-        except SQLAlchemyError as e:
-            logging.error(f"Database error: {str(e)}")
+
+            return {
+                "status": "success",
+                "data": result["data"],
+                "meta": {
+                    "total": result["total"],
+                    "page": result["page"],
+                    "limit": result["limit"],
+                    "total_page": (result["total"] + limit - 1) // limit
+                }
+            }, 200
+
+        except Exception as e:
+            print(f"Error: {str(e)}")
             return {'status': "Internal server error"}, 500
         
 

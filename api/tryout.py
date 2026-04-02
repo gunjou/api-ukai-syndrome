@@ -38,6 +38,11 @@ edit_tryout_parser.add_argument('access_end_time', type=str, required=False, hel
 visibility_parser = reqparse.RequestParser()
 visibility_parser.add_argument('visibility', type=str, required=True, choices=('hold', 'open'), help="Status visibility tryout ('hold' atau 'open')")
 
+tryout_parser = reqparse.RequestParser()
+tryout_parser.add_argument('page', type=int, default=1)
+tryout_parser.add_argument('limit', type=int, default=20)
+tryout_parser.add_argument('search', type=str, required=False)
+
 attempt_answer_model = tryout_ns.model("AttemptAnswer", {
     "attempt_token": fields.String(required=True, description="UUID token attempt"),
     "nomor": fields.Integer(required=True, description="Nomor soal (1-based)"),
@@ -68,29 +73,55 @@ class TryoutListResource(Resource):
     
 @tryout_ns.route('/all-tryout')
 class AdminTryoutListResource(Resource):
-    # @session_required
+
     @jwt_required()
     @role_required(['admin'])
-    @tryout_ns.param('id_batch', 'ID Batch untuk filter', type='integer')
-    @tryout_ns.param('id_paketkelas', 'ID Paket Kelas untuk filter', type='integer')
+    @tryout_ns.expect(tryout_parser)
     def get(self):
-        """Akses: (admin) | Get daftar tryout berdasarkan batch atau kelas"""
-        id_batch = request.args.get('id_batch', type=int)
-        id_paketkelas = request.args.get('id_paketkelas', type=int)
+        """(admin) List tryout + pagination + search"""
 
-        # if not id_batch and not id_paketkelas:
-        #     return {"message": "Minimal salah satu dari id_batch atau id_paketkelas harus diisi"}, 400
+        args = tryout_parser.parse_args()
 
-        # (Opsional) Validasi id_batch dan id_paketkelas benar-benar ada di DB
-        if id_batch and not is_valid_batch(id_batch):
-            return {"message": f"Batch dengan ID {id_batch} tidak ditemukan"}, 404
+        page = args.get("page")
+        limit = args.get("limit")
+        search = args.get("search")
 
-        if id_paketkelas and not is_valid_paketkelas(id_paketkelas):
-            return {"message": f"Paket kelas dengan ID {id_paketkelas} tidak ditemukan"}, 404
+        result = get_tryout_list_admin(page, limit, search)
 
-        tryouts = get_tryout_list_admin(id_batch=id_batch, id_paketkelas=id_paketkelas)
-        return {"data": tryouts}, 200
-    
+        if not result or not result["data"]:
+            return {"status": "error", "message": "Tidak ada tryout ditemukan"}, 404
+
+        return {
+            "status": "success",
+            "data": result["data"],
+            "meta": {
+                "total": result["total"],
+                "page": result["page"],
+                "limit": result["limit"],
+                "total_page": (result["total"] + limit - 1) // limit
+            }
+        }, 200
+
+@tryout_ns.route('/<int:id_tryout>/kelas')
+class TryoutKelasResource(Resource):
+
+    @jwt_required()
+    @role_required(['admin'])
+    def get(self, id_tryout):
+        """(admin) Ambil paketkelas berdasarkan tryout"""
+
+        result = get_paketkelas_by_tryout(id_tryout)
+
+        if not result:
+            return {"status": "error", "message": "Tidak ada kelas ditemukan"}, 404
+
+        return {
+            "status": "success",
+            "data": result,
+            "meta": {
+                "total": len(result)
+            }
+        }, 200
 
 @tryout_ns.route('')
 class TryoutCreateResource(Resource):
