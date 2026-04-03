@@ -19,6 +19,34 @@ kelas_parser.add_argument('page', type=int, default=1, help='Halaman')
 kelas_parser.add_argument('limit', type=int, default=20, help='Jumlah data per halaman')
 kelas_parser.add_argument('search', type=str, required=False, help='Search nama kelas/batch/paket')
 
+
+@kelas_ns.route('/all')
+class KelasDropdownResource(Resource):
+
+    @jwt_required()
+    @role_required('admin')
+    def get(self):
+        """(admin) Dropdown kelas (id + nama saja)"""
+
+        try:
+            data = get_kelas_dropdown_all()
+
+            if not data:
+                return {"status": "error", "message": "Tidak ada kelas ditemukan"}, 404
+
+            return {
+                "status": "success",
+                "data": data,
+                "meta": {
+                    "total": len(data)
+                }
+            }, 200
+
+        except Exception as e:
+            print(str(e))
+            return {"status": "error", "message": "Internal server error"}, 500
+        
+
 @kelas_ns.route('')
 class KelasListResource(Resource):
 

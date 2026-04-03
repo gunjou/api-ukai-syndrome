@@ -5,6 +5,27 @@ from ..utils.helper import serialize_row
 from ..utils.config import get_connection, get_wita
 
 
+def get_kelas_dropdown_all():
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT 
+                    pk.id_paketkelas,
+                    pk.nama_kelas
+                FROM paketkelas pk
+                WHERE pk.status = 1
+                ORDER BY pk.nama_kelas ASC
+            """)).mappings().fetchall()
+
+            return [dict(row) for row in result]
+
+    except SQLAlchemyError as e:
+        print(f"[get_kelas_dropdown_all] Error: {e}")
+        return []
+    
+    
 def get_kelas_by_admin(page=1, limit=20, search=None):
     engine = get_connection()
     offset = (page - 1) * limit
