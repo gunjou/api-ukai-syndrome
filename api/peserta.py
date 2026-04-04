@@ -35,6 +35,12 @@ peserta_parser.add_argument('page', type=int, default=1, help='Halaman')
 peserta_parser.add_argument('limit', type=int, default=20, help='Jumlah data per halaman')
 peserta_parser.add_argument('search', type=str, required=False, help='Search nama/email')
 peserta_parser.add_argument('id_batch', type=int, required=False, help='Filter berdasarkan batch')
+peserta_parser.add_argument(
+    'batch_filter', type=str,
+    required=False,
+    choices=('aktif', 'nonaktif', 'tanpa', 'publik'),
+    help='Filter batch: aktif | nonaktif | tanpa | publik (nonaktif + tanpa)'
+)
 
 @peserta_ns.route('')
 class PesertaListResource(Resource):
@@ -102,7 +108,8 @@ class PesertaAktifListResource(Resource):
             limit = args.get("limit")
             search = args.get("search")
             id_batch = args.get("id_batch")
-            result = get_all_peserta_aktif(page, limit, search, id_batch)
+            batch_filter = args.get("batch_filter")
+            result = get_all_peserta_aktif(page, limit, search, id_batch, batch_filter)
             if not result or not result["data"]:
                 return {'status': 'error', 'message': 'Tidak ada peserta ditemukan'}, 404
             return {

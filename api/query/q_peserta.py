@@ -45,7 +45,7 @@ def get_all_peserta():
         return []
     
     
-def get_all_peserta_aktif(page=1, limit=20, search=None, id_batch=None):
+def get_all_peserta_aktif(page=1, limit=20, search=None, id_batch=None, batch_filter=None):
     engine = get_connection()
     offset = (page - 1) * limit
 
@@ -59,7 +59,7 @@ def get_all_peserta_aktif(page=1, limit=20, search=None, id_batch=None):
                 LEFT JOIN userbatch ub 
                     ON ub.id_user = u.id_user AND ub.status = 1
                 LEFT JOIN batch b 
-                    ON b.id_batch = ub.id_batch AND b.status = 1
+                    ON b.id_batch = ub.id_batch
                 LEFT JOIN pesertakelas pkls 
                     ON pkls.id_user = u.id_user AND pkls.status = 1
                 LEFT JOIN paketkelas pk 
@@ -67,32 +67,46 @@ def get_all_peserta_aktif(page=1, limit=20, search=None, id_batch=None):
                 LEFT JOIN paket p 
                     ON p.id_paket = pk.id_paket AND p.status = 1
                 WHERE u.role = 'peserta'
-                    AND u.status = 1
+                  AND u.status = 1
             """
-                #   AND u.nama IS NOT NULL
-                #   AND b.id_batch IS NOT NULL
 
             params = {}
 
-            # 🔍 Search
+            # 🔍 SEARCH
             if search:
                 base_query += """
                 AND (u.nama ILIKE :search OR u.email ILIKE :search)
                 """
                 params["search"] = f"%{search}%"
 
-            # 📦 Filter Batch
+            # 📦 FILTER ID BATCH (specific)
             if id_batch:
-                base_query += """
-                AND b.id_batch = :id_batch
-                """
+                base_query += " AND b.id_batch = :id_batch"
                 params["id_batch"] = id_batch
+
+            # 🆕 FILTER KONDISI BATCH
+            if batch_filter == "aktif":
+                base_query += " AND b.status = 1"
+
+            elif batch_filter == "nonaktif":
+                base_query += " AND b.status = 0"
+
+            elif batch_filter == "tanpa":
+                base_query += " AND b.id_batch IS NULL"
+
+            elif batch_filter == "publik":
+                base_query += """
+                AND (
+                    b.status = 0
+                    OR b.id_batch IS NULL
+                )
+                """
 
             # 🔹 DATA QUERY
             data_query = text(f"""
                 SELECT 
                     u.id_user, u.nama, u.email, u.kode_pemulihan, u.no_hp,
-                    b.nama_batch, b.tanggal_mulai, b.tanggal_selesai, 
+                    b.nama_batch, b.tanggal_mulai, b.tanggal_selesai, b.status as batch_status,
                     ub.tanggal_join, ub.status_enroll,
                     pk.nama_kelas, pk.id_paketkelas, pk.id_batch, 
                     p.id_paket, p.nama_paket
@@ -108,11 +122,15 @@ def get_all_peserta_aktif(page=1, limit=20, search=None, id_batch=None):
 
             data = connection.execute(data_query, params).mappings().fetchall()
 
-            # 🔹 COUNT
-            count_query = text(f"SELECT COUNT(*) {base_query}")
+            # 🔹 COUNT (FIX: DISTINCT biar tidak double)
+            count_query = text(f"""
+                SELECT COUNT(DISTINCT u.id_user)
+                {base_query}
+            """)
+
             total = connection.execute(count_query, params).scalar()
 
-            execution_time = round((time.time() - start_time) * 1000, 2)  # ms
+            execution_time = round((time.time() - start_time) * 1000, 2)
 
             return {
                 "data": [serialize_row(row) for row in data],
@@ -189,7 +207,7 @@ def insert_peserta_with_batch_kelas(payload):
             else:
                 # Email belum ada → insert ke users
                 hash_password = generate_password_hash(password, method='pbkdf2:sha256')
-                kode_pemulihan = ''.join(random.choices("0123456789", k=6))
+                kode_pemulihan = ''.join(random.choices(string.ascii_letters, k=6))
 
                 result = conn.execute(
                     text("""

@@ -12,10 +12,11 @@ def get_kelas_dropdown_all():
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT 
-                    pk.id_paketkelas,
-                    pk.nama_kelas
+                    pk.id_paketkelas, pk.nama_kelas, b.id_batch, b.nama_batch
                 FROM paketkelas pk
+                INNER JOIN batch b ON pk.id_batch = b.id_batch
                 WHERE pk.status = 1
+                    AND b.status = 1
                 ORDER BY pk.nama_kelas ASC
             """)).mappings().fetchall()
 
