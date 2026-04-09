@@ -1,5 +1,5 @@
 from flask import request
-from flask_jwt_extended import jwt_required
+from flask_jwt_extended import get_jwt_identity, jwt_required
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -98,3 +98,25 @@ class PesertaKelasResource(Resource):
             return {"kelas": paket_kelas, "peserta": peserta }, 200
         except Exception as e:
             return {"status": "error", "message": str(e)}, 500
+
+
+@pesertakelas_ns.route('/status-batch-peserta')
+class PesertaBatchStatusResource(Resource):
+
+    @jwt_required()
+    @role_required(['peserta', 'admin'])
+    def get(self):
+        """Cek apakah peserta memiliki batch aktif (0/1)"""
+
+        try:
+            id_user = int(get_jwt_identity())
+            status = get_status_batch_peserta(id_user)
+
+            return {
+                "status": "success",
+                "is_batch_active": status
+            }, 200
+
+        except Exception as e:
+            print(str(e))
+            return {"status": "error", "message": "Internal server error"}, 500

@@ -122,3 +122,42 @@ def get_peserta_by_kelas(id_kelas):
     except Exception as e:
         print(f"Error: {e}")
         return []
+    
+def get_status_batch_peserta(id_user):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT 
+                    CASE
+                        -- punya batch aktif
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM userbatch ub
+                            JOIN batch b ON b.id_batch = ub.id_batch
+                            WHERE ub.id_user = :id_user
+                              AND ub.status = 1
+                              AND b.status = 1
+                        ) THEN 1
+
+                        -- punya batch tapi tidak aktif
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM userbatch ub
+                            JOIN batch b ON b.id_batch = ub.id_batch
+                            WHERE ub.id_user = :id_user
+                              AND ub.status = 1
+                              AND b.status = 0
+                        ) THEN 0
+
+                        -- tidak punya batch
+                        ELSE NULL
+                    END AS batch_status
+            """), {"id_user": id_user}).scalar()
+
+            return result  # bisa 1, 0, atau None
+
+    except Exception as e:
+        print(f"[get_status_batch_peserta] Error: {e}")
+        return None
