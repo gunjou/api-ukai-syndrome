@@ -120,3 +120,29 @@ class PesertaBatchStatusResource(Resource):
         except Exception as e:
             print(str(e))
             return {"status": "error", "message": "Internal server error"}, 500
+
+
+@pesertakelas_ns.route('/status-private-peserta')
+class PesertaPrivateStatusResource(Resource):
+
+    @jwt_required()
+    @role_required(['peserta', 'admin'])
+    def get(self):
+        """Cek apakah peserta punya kelas private"""
+
+        try:
+            id_user = int(get_jwt_identity())
+
+            status = get_status_private_peserta(id_user)
+
+            return {
+                "status": "success",
+                "has_private_class": status
+            }, 200
+
+        except Exception as e:
+            print(str(e))
+            return {
+                "status": "error",
+                "message": "Internal server error"
+            }, 500

@@ -161,3 +161,28 @@ def get_status_batch_peserta(id_user):
     except Exception as e:
         print(f"[get_status_batch_peserta] Error: {e}")
         return None
+
+
+def get_status_private_peserta(id_user):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT 
+                    CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM mentorship m
+                            WHERE m.id_peserta = :id_user
+                              AND m.status = 1
+                        ) THEN 1
+                        ELSE 0
+                    END AS has_private_class
+            """), {"id_user": id_user}).scalar()
+
+            return result
+
+    except Exception as e:
+        print(f"[get_status_private_peserta] Error: {e}")
+        return 0
