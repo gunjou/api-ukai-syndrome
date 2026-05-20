@@ -298,6 +298,60 @@ def delete_mentorship(id_mentorship):
 
 
 
+def get_mentor_mentorships(id_mentor):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+
+            query = text("""
+                SELECT
+                    m.id_mentorship,
+                    m.nama_mentorship,
+                    m.created_at,
+
+                    mentor.id_user AS id_mentor,
+                    mentor.nama AS nama_mentor,
+
+                    peserta.id_user AS id_peserta,
+                    peserta.nama AS nama_peserta,
+                    peserta.email AS email_peserta,
+
+                    -- TOTAL MATERI
+                    (
+                        SELECT COUNT(*)
+                        FROM materi_private mp
+                        WHERE mp.id_mentorship = m.id_mentorship
+                          AND mp.status = 1
+                    ) AS total_materi
+
+                FROM mentorship m
+
+                JOIN users mentor
+                    ON mentor.id_user = m.id_mentor
+                   AND mentor.status = 1
+
+                JOIN users peserta
+                    ON peserta.id_user = m.id_peserta
+                   AND peserta.status = 1
+
+                WHERE m.status = 1
+                  AND m.id_mentor = :id_mentor
+
+                ORDER BY m.created_at DESC
+            """)
+
+            result = conn.execute(query, {
+                "id_mentor": id_mentor
+            }).mappings().fetchall()
+
+            return [serialize_row(row) for row in result]
+
+    except SQLAlchemyError as e:
+        print(f"[get_mentor_mentorships] Error: {e}")
+        return []
+
+
 # ======================================================================
 # QUERY MATERI PRIVATE (ADMIN)
 # ======================================================================

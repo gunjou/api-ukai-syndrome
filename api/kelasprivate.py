@@ -277,6 +277,42 @@ class MentorshipDetailResource(Resource):
             }, 500
 
 
+# ======================================================================
+# ENDPOINT KELAS PRIVATE (MENTOR)
+# ======================================================================
+@kelasprivate_ns.route('/mentor')
+class MentorMentorshipResource(Resource):
+
+    @jwt_required()
+    @role_required('mentor')
+    def get(self):
+        """(mentor) List mentorship milik mentor login"""
+
+        try:
+            # ambil identity dari JWT
+            id_mentor = get_jwt_identity()
+
+            result = get_mentor_mentorships(id_mentor)
+
+            if not result:
+                return {
+                    "status": "error",
+                    "message": "Tidak ada mentorship ditemukan"
+                }, 404
+
+            return {
+                "status": "success",
+                "data": result
+            }, 200
+
+        except Exception as e:
+            print(str(e))
+
+            return {
+                "status": "error",
+                "message": "Internal server error"
+            }, 500
+
 
 # ======================================================================
 # ENDPOINT MATERI PRIVATE (ADMIN)
