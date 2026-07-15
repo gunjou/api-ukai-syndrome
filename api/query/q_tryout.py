@@ -105,7 +105,15 @@ def get_tryout_list_admin(page=1, limit=20, search=None):
                         FROM to_paketkelas tp
                         WHERE tp.id_tryout = t.id_tryout
                           AND tp.status = 1
-                    ) AS total_kelas
+                    ) AS total_kelas,
+                    
+                    (
+                        SELECT COUNT(*)
+                        FROM soaltryout s
+                        WHERE s.id_tryout = t.id_tryout
+                        AND s.status = 1
+                        AND s.jawaban_benar IS NULL
+                    ) AS unanswered_count
 
                 {base_query}
                 ORDER BY t.created_at DESC
@@ -127,6 +135,8 @@ def get_tryout_list_admin(page=1, limit=20, search=None):
                 enrich_datetime_fields(row_dict, "access_end_at")
 
                 row_dict["total_kelas"] = int(row_dict["total_kelas"])
+                row_dict["unanswered_count"] = int(row_dict["unanswered_count"])
+                row_dict["has_unanswered"] = row_dict["unanswered_count"] > 0
 
                 processed.append(serialize_row(row_dict))
 

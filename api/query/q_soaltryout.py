@@ -128,29 +128,68 @@ def insert_bulk_soaltryout(id_tryout, soal_list, existing_count):
 
 def get_soal_by_tryout(id_tryout):
     engine = get_connection()
+
     try:
         with engine.connect() as conn:
-            # Pastikan tryout-nya ada
+
+            # Cek tryout
             cek_tryout = conn.execute(
-                text("SELECT id_tryout FROM tryout WHERE id_tryout = :id_tryout AND status = 1"),
+                text("""
+                    SELECT id_tryout
+                    FROM tryout
+                    WHERE id_tryout = :id_tryout
+                      AND status = 1
+                """),
                 {"id_tryout": id_tryout}
             ).fetchone()
+
             if not cek_tryout:
-                return None  # Tryout tidak ditemukan
-            # Ambil semua soal dari tryout tersebut
-            q = text("""
-                SELECT 
-                    id_soaltryout, id_tryout, nomor_urut, pertanyaan, pilihan_a, pilihan_b, pilihan_c, pilihan_d,
-                    pilihan_e, jawaban_benar, pembahasan, status, created_at, updated_at
-                FROM soaltryout
-                WHERE id_tryout = :id_tryout AND status = 1
-                ORDER BY nomor_urut ASC
-            """)
-            result = conn.execute(q, {"id_tryout": id_tryout}).mappings().all()
-            # Jika tidak ada soal, kembalikan list kosong
-            if not result:
-                return []
-            return [serialize_row_datetime(row) for row in result]
+                return None
+
+            # Hitung soal yang belum memiliki jawaban benar
+            unanswered_count = conn.execute(
+                text("""
+                    SELECT COUNT(*)
+                    FROM soaltryout
+                    WHERE id_tryout = :id_tryout
+                      AND status = 1
+                      AND jawaban_benar IS NULL
+                """),
+                {"id_tryout": id_tryout}
+            ).scalar()
+
+            # Ambil daftar soal
+            result = conn.execute(
+                text("""
+                    SELECT
+                        id_soaltryout,
+                        id_tryout,
+                        nomor_urut,
+                        pertanyaan,
+                        pilihan_a,
+                        pilihan_b,
+                        pilihan_c,
+                        pilihan_d,
+                        pilihan_e,
+                        jawaban_benar,
+                        pembahasan,
+                        status,
+                        created_at,
+                        updated_at
+                    FROM soaltryout
+                    WHERE id_tryout = :id_tryout
+                      AND status = 1
+                    ORDER BY nomor_urut ASC
+                """),
+                {"id_tryout": id_tryout}
+            ).mappings().all()
+
+            return {
+                "questions": [serialize_row_datetime(row) for row in result],
+                "unanswered_count": int(unanswered_count),
+                "has_unanswered": unanswered_count > 0
+            }
+
     except SQLAlchemyError as e:
         print(f"[ERROR get_soal_by_tryout] {e}")
         return None

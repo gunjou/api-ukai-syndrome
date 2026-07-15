@@ -181,32 +181,43 @@ class UploadSoalTryoutResource(Resource):
 
 @soaltryout_ns.route('/<int:id_tryout>')
 class SoalTryoutListResource(Resource):
+
     @jwt_required()
     @role_required('admin')
     def get(self, id_tryout):
         """Akses: (Admin) | Ambil semua soal berdasarkan ID Tryout"""
+
         try:
             result = get_soal_by_tryout(id_tryout)
-            # Jika tryout tidak ditemukan
+
             if result is None:
                 return {
                     "status": "not_found",
                     "message": f"Tryout dengan ID {id_tryout} tidak ditemukan",
                     "data": None
                 }, 404
-            # Jika tryout valid tapi belum ada soal
-            if isinstance(result, list) and len(result) == 0:
+
+            if len(result["questions"]) == 0:
                 return {
                     "status": "empty",
                     "message": f"Tryout dengan ID {id_tryout} belum memiliki soal",
-                    "data": []
+                    "data": [],
+                    "meta": {
+                        "unanswered_count": 0,
+                        "has_unanswered": False
+                    }
                 }, 200
-            # Jika ada data soal
+
             return {
                 "status": "success",
                 "message": "Data soal berhasil diambil",
-                "data": result
+                "data": result["questions"],
+                "meta": {
+                    "unanswered_count": result["unanswered_count"],
+                    "has_unanswered": result["has_unanswered"]
+                }
             }, 200
+
         except Exception as e:
             print(f"[ERROR GET /soal-tryout/{id_tryout}] {e}")
             return {
