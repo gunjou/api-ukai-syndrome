@@ -1,6 +1,7 @@
 import requests
 import pandas as pd
-from flask_restx import Namespace, Resource, reqparse
+from flask import request
+from flask_restx import Namespace, Resource, reqparse, fields
 from flask_restx.reqparse import FileStorage
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 
@@ -22,7 +23,7 @@ soal_tryout_parser.add_argument('pilihan_b', type=str, required=True)
 soal_tryout_parser.add_argument('pilihan_c', type=str, required=True)
 soal_tryout_parser.add_argument('pilihan_d', type=str, required=True)
 soal_tryout_parser.add_argument('pilihan_e', type=str, required=True)
-soal_tryout_parser.add_argument('jawaban_benar', type=str, required=True, choices=('A', 'B', 'C', 'D', 'E'))
+soal_tryout_parser.add_argument('jawaban_benar', type=str, required=False, choices=('A', 'B', 'C', 'D', 'E'), default=None)
 soal_tryout_parser.add_argument('pembahasan', type=str, required=False, default='')
 soal_tryout_parser.add_argument('gambar', type=FileStorage, location='files', required=False)
 
@@ -38,6 +39,7 @@ edit_soal_parser.add_argument('pilihan_c', type=str, required=False)
 edit_soal_parser.add_argument('pilihan_d', type=str, required=False)
 edit_soal_parser.add_argument('pilihan_e', type=str, required=False)
 edit_soal_parser.add_argument('jawaban_benar', type=str, required=False, choices=('A', 'B', 'C', 'D', 'E'))
+edit_soal_parser.add_argument('hapus_jawaban_benar', type=bool, required=False, default=False)
 edit_soal_parser.add_argument('pembahasan', type=str, required=False)
 edit_soal_parser.add_argument('gambar', type=FileStorage, location='files', required=False)
 edit_soal_parser.add_argument('hapus_gambar', type=bool, required=False, default=False)

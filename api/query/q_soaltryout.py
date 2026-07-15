@@ -192,6 +192,20 @@ def update_soaltryout(id_soaltryout, data):
         if fields["jawaban_benar"].upper() not in valid:
             return {"success": False, "message": "Jawaban benar harus A, B, C, D, atau E"}
         fields["jawaban_benar"] = fields["jawaban_benar"].upper()
+        
+    hapus_jawaban = fields.pop("hapus_jawaban_benar", False)
+
+    if hapus_jawaban:
+        fields["jawaban_benar"] = None
+    elif fields.get("jawaban_benar") is not None:
+        valid = ["A", "B", "C", "D", "E"]
+        if fields["jawaban_benar"].upper() not in valid:
+            return {
+                "success": False,
+                "message": "Jawaban benar harus A, B, C, D, atau E"
+            }
+
+        fields["jawaban_benar"] = fields["jawaban_benar"].upper()
 
     # =============== HANDLE GAMBAR BARU ===============
     new_image_url = None
