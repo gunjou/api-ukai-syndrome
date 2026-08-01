@@ -232,33 +232,92 @@ def get_mentorship_by_id(id_mentorship):
         return None
 
 
-def update_mentorship(id_mentorship, nama_mentorship=None):
+def update_mentorship(id_mentorship, id_mentor, id_peserta, nama_mentorship=None):
     engine = get_connection()
 
     try:
         with engine.begin() as conn:
 
-            existing = conn.execute(text("""
-                SELECT 1 FROM mentorship
-                WHERE id_mentorship = :id
+            # cek mentorship
+            mentorship = conn.execute(text("""
+                SELECT id_mentorship
+                FROM mentorship
+                WHERE id_mentorship = :id_mentorship
                   AND status = 1
-            """), {"id": id_mentorship}).fetchone()
+            """), {
+                "id_mentorship": id_mentorship
+            }).fetchone()
 
-            if not existing:
+            if not mentorship:
                 return {"error": "Mentorship tidak ditemukan"}
 
+            # validasi mentor
+            mentor = conn.execute(text("""
+                SELECT id_user
+                FROM users
+                WHERE id_user = :id_mentor
+                  AND role = 'mentor'
+                  AND status = 1
+            """), {
+                "id_mentor": id_mentor
+            }).fetchone()
+
+            if not mentor:
+                return {"error": "Mentor tidak valid"}
+
+            # validasi peserta
+            peserta = conn.execute(text("""
+                SELECT id_user
+                FROM users
+                WHERE id_user = :id_peserta
+                  AND role = 'peserta'
+                  AND status = 1
+            """), {
+                "id_peserta": id_peserta
+            }).fetchone()
+
+            if not peserta:
+                return {"error": "Peserta tidak valid"}
+
+            # cek duplicate selain dirinya sendiri
+            duplicate = conn.execute(text("""
+                SELECT 1
+                FROM mentorship
+                WHERE id_mentor = :id_mentor
+                  AND id_peserta = :id_peserta
+                  AND status = 1
+                  AND id_mentorship <> :id_mentorship
+            """), {
+                "id_mentor": id_mentor,
+                "id_peserta": id_peserta,
+                "id_mentorship": id_mentorship
+            }).fetchone()
+
+            if duplicate:
+                return {
+                    "error": "Mentorship dengan mentor dan peserta tersebut sudah ada"
+                }
+
+            # update
             conn.execute(text("""
                 UPDATE mentorship
-                SET nama_mentorship = COALESCE(:nama_mentorship, nama_mentorship),
+                SET
+                    id_mentor = :id_mentor,
+                    id_peserta = :id_peserta,
+                    nama_mentorship = :nama_mentorship,
                     updated_at = :now
-                WHERE id_mentorship = :id
+                WHERE id_mentorship = :id_mentorship
             """), {
-                "id": id_mentorship,
+                "id_mentor": id_mentor,
+                "id_peserta": id_peserta,
                 "nama_mentorship": nama_mentorship,
+                "id_mentorship": id_mentorship,
                 "now": get_wita()
             })
 
-            return {"id_mentorship": id_mentorship}
+            return {
+                "id_mentorship": id_mentorship
+            }
 
     except SQLAlchemyError as e:
         print(f"[update_mentorship] Error: {e}")

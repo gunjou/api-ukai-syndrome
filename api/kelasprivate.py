@@ -22,6 +22,8 @@ create_kelasprivate_parser.add_argument('id_peserta', type=int, required=True)
 create_kelasprivate_parser.add_argument('nama_mentorship', type=str, required=False)
 
 update_kelasprivate_parser = reqparse.RequestParser()
+update_kelasprivate_parser.add_argument('id_mentor', type=int, required=True)
+update_kelasprivate_parser.add_argument('id_peserta', type=int, required=True)
 update_kelasprivate_parser.add_argument('nama_mentorship', type=str, required=False)
 
 materi_private_parser = reqparse.RequestParser()
@@ -213,9 +215,17 @@ class MentorshipDetailResource(Resource):
 
         try:
             args = update_kelasprivate_parser.parse_args()
+
+            id_mentor = args.get("id_mentor")
+            id_peserta = args.get("id_peserta")
             nama_mentorship = args.get("nama_mentorship")
 
-            result = update_mentorship(id_mentorship, nama_mentorship)
+            result = update_mentorship(
+                id_mentorship=id_mentorship,
+                id_mentor=id_mentor,
+                id_peserta=id_peserta,
+                nama_mentorship=nama_mentorship
+            )
 
             if result is None:
                 return {
@@ -227,7 +237,7 @@ class MentorshipDetailResource(Resource):
                 return {
                     "status": "error",
                     "message": result["error"]
-                }, 404
+                }, 400
 
             return {
                 "status": "success",
