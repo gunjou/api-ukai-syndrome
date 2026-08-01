@@ -309,6 +309,69 @@ def assign_kelas_to_modul(id_modul, id_paketkelas_list):
         print(f"[assign_kelas_to_modul] Error: {e}")
         return 0
 
+
+def assign_modul_to_kelas(id_paketkelas, id_modul_list):
+    """
+    Assign satu atau banyak modul ke satu kelas.
+    """
+    engine = get_connection()
+
+    try:
+        with engine.begin() as conn:
+
+            now = get_wita()
+            inserted_count = 0
+
+            for id_modul in id_modul_list:
+
+                # Cek apakah relasi sudah ada
+                existing = conn.execute(text("""
+                    SELECT 1
+                    FROM modulkelas
+                    WHERE id_modul = :id_modul
+                      AND id_paketkelas = :id_paketkelas
+                      AND status = 1
+                """), {
+                    "id_modul": id_modul,
+                    "id_paketkelas": id_paketkelas
+                }).fetchone()
+
+                if existing:
+                    continue
+
+                # Insert relasi baru
+                conn.execute(text("""
+                    INSERT INTO modulkelas
+                    (
+                        id_modul,
+                        id_paketkelas,
+                        status,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES
+                    (
+                        :id_modul,
+                        :id_paketkelas,
+                        1,
+                        :now,
+                        :now
+                    )
+                """), {
+                    "id_modul": id_modul,
+                    "id_paketkelas": id_paketkelas,
+                    "now": now
+                })
+
+                inserted_count += 1
+
+            return inserted_count
+
+    except SQLAlchemyError as e:
+        print(f"[assign_modul_to_kelas] Error: {e}")
+        return 0
+
+
 def get_old_modul_by_id(id_modul):
     engine = get_connection()
     try:

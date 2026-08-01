@@ -27,6 +27,23 @@ visibility_model = modul_ns.model("ModulVisibility", {
 modul_parser = reqparse.RequestParser()
 modul_parser.add_argument('search', type=str, required=False, help='Search judul modul')
 
+assign_kelas_request = modul_ns.model('AssignKelasRequest', {
+    'id_paketkelas': fields.List(
+        fields.Integer,
+        required=True,
+        description='Daftar ID kelas yang akan diassign ke modul',
+        example=[1, 2, 3]
+    )
+})
+
+assign_modul_request = modul_ns.model('AssignModulRequest', {
+    'id_modul': fields.List(
+        fields.Integer,
+        required=True,
+        description='Daftar ID modul yang akan diassign ke kelas',
+        example=[1, 2, 3]
+    )
+})
 @modul_ns.route('')
 class ModulListResource(Resource):
     @modul_ns.expect(modul_parser)
@@ -184,7 +201,8 @@ class DeleteKelasResource(Resource):
 @modul_ns.route('/assign-kelas/<int:id_modul>')
 class AssignKelasResource(Resource):
     @jwt_required()
-    @role_required('admin')  # bisa kamu ubah sesuai kebutuhan
+    @role_required('admin')
+    @modul_ns.expect(assign_kelas_request)
     def post(self, id_modul):
         """
         Akses: admin, Assign satu atau banyak kelas ke modul.
@@ -207,6 +225,50 @@ class AssignKelasResource(Resource):
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
 
+
+@modul_ns.route('/assign-modul/<int:id_paketkelas>')
+class AssignModulResource(Resource):
+    @jwt_required()
+    @role_required('admin')
+    @modul_ns.expect(assign_modul_request)
+    def post(self, id_paketkelas):
+        """
+        Akses: admin
+        Assign satu atau banyak modul ke satu kelas.
+
+        Body:
+        {
+            "id_modul": [1,2,3,...]
+        }
+        """
+
+        data = request.get_json()
+        id_modul_list = data.get("id_modul", [])
+
+        if not isinstance(id_modul_list, list) or not id_modul_list:
+            return {
+                "status": "error",
+                "message": "id_modul harus berupa array dan tidak boleh kosong"
+            }, 400
+
+        try:
+            inserted_count = assign_modul_to_kelas(id_paketkelas, id_modul_list)
+
+            if inserted_count == 0:
+                return {
+                    "status": "error",
+                    "message": "Tidak ada modul yang berhasil diassign"
+                }, 400
+
+            return {
+                "status": f"{inserted_count} modul berhasil diassign ke kelas {id_paketkelas}"
+            }, 201
+
+        except SQLAlchemyError as e:
+            return {
+                "status": "error",
+                "message": str(e)
+            }, 500
 
 @modul_ns.route('/<int:id_modul>')
 class ModulDetailResource(Resource):

@@ -62,15 +62,14 @@ def get_hasiltryout_list(filters: dict):
 
             base_query = """
                 SELECT
-                    h.id_hasiltryout, h.id_tryout, h.id_user, h.attempt_token, h.attempt_ke, h.start_time, 
-                    h.end_time, h.tanggal_pengerjaan, h.nilai, h.benar, h.salah, h.kosong, 
-                    h.ragu_ragu, h.status_pengerjaan,
-                    u.nama AS nama_user,
-                    u.nickname,
-                    t.judul AS judul_tryout
+                    h.id_hasiltryout, h.id_tryout, h.id_user, h.attempt_token, h.attempt_ke, h.start_time, h.end_time, 
+                    h.tanggal_pengerjaan, h.nilai, h.benar, h.salah, h.kosong, h.ragu_ragu, h.status_pengerjaan, 
+                    u.nama AS nama_user, u.nickname, u.email, u.no_hp, pk.nama_kelas, t.judul AS judul_tryout
                 FROM hasiltryout h
                 LEFT JOIN users u ON u.id_user = h.id_user
                 LEFT JOIN tryout t ON t.id_tryout = h.id_tryout
+                LEFT JOIN pesertakelas ps ON ps.id_user = h.id_user AND ps.status = 1
+                LEFT JOIN paketkelas pk ON pk.id_paketkelas = ps.id_paketkelas AND pk.status = 1
                 WHERE h.status = 1
             """
 
