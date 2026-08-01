@@ -113,8 +113,18 @@ def get_hasiltryout_list(filters: dict):
             base_query += " AND h.status = 1 ORDER BY h.tanggal_pengerjaan DESC, h.start_time DESC"
 
             result = conn.execute(text(base_query), params).mappings().fetchall()
+            
+            processed = []
 
-            return [serialize_datetime_uuid(row) for row in result]
+            for row in result:
+                row_dict = dict(row)
+
+                if row_dict["nilai"] is not None:
+                    row_dict["nilai"] = round(float(row_dict["nilai"]), 1)
+
+                processed.append(serialize_datetime_uuid(row_dict))
+
+            return processed
 
     except SQLAlchemyError as e:
         print(f"[ERROR get_hasiltryout_list] {e}")

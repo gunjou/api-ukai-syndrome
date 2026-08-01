@@ -70,7 +70,29 @@ class TryoutListResource(Resource):
 
         tryouts = get_tryout_list_by_user(id_user, role)
         return {"data": tryouts}, 200
-    
+
+
+@tryout_ns.route('/dropdown-list')
+class AdminTryoutDropdownResource(Resource):
+
+    @jwt_required()
+    @role_required(['admin'])
+    def get(self):
+        """(admin) List tryout untuk dropdown filter"""
+
+        result = get_tryout_dropdown_admin()
+
+        if not result or not result["data"]:
+            return {
+                "status": "error",
+                "message": "Tidak ada tryout ditemukan"
+            }, 404
+
+        return {
+            "status": "success",
+            "data": result["data"]
+        }, 200
+
 @tryout_ns.route('/all-tryout')
 class AdminTryoutListResource(Resource):
 

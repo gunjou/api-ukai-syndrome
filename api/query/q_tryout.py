@@ -75,7 +75,30 @@ def get_tryout_by_id(id_tryout: int):
     except SQLAlchemyError as e:
         print(f"[ERROR get_tryout_by_id] {e}")
         return None
-    
+
+
+def get_tryout_dropdown_admin():
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+
+            result = conn.execute(text("""
+                SELECT
+                    id_tryout,
+                    judul
+                FROM tryout
+                WHERE status = 1
+                ORDER BY judul ASC
+            """)).mappings().all()
+
+            return {"data": [dict(row) for row in result]}
+
+    except SQLAlchemyError as e:
+        print(f"[ERROR get_tryout_dropdown_admin] {e}")
+        return None
+
+
 def get_tryout_list_admin(page=1, limit=20, search=None):
     engine = get_connection()
     offset = (page - 1) * limit
