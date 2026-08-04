@@ -271,32 +271,55 @@ def delete_kelas_in_modul(id_modulkelas):
 def assign_kelas_to_modul(id_modul, id_paketkelas_list):
     """
     Assign satu atau banyak kelas ke modul tertentu.
+    Jika relasi sudah ada namun status=0 maka aktifkan kembali.
     """
+
     engine = get_connection()
+
     try:
         with engine.begin() as conn:
             now = get_wita()
             inserted_count = 0
 
             for id_paketkelas in id_paketkelas_list:
-                # Cek apakah sudah ada relasi aktif
+
+                # Cek apakah relasi sudah pernah ada
                 existing = conn.execute(text("""
-                    SELECT 1 FROM modulkelas
-                    WHERE id_modul = :id_modul 
+                    SELECT id_modulkelas, status
+                    FROM modulkelas
+                    WHERE id_modul = :id_modul
                       AND id_paketkelas = :id_paketkelas
-                      AND status = 1
                 """), {
                     "id_modul": id_modul,
                     "id_paketkelas": id_paketkelas
                 }).fetchone()
 
                 if existing:
-                    continue  # skip jika sudah ada
 
-                # Insert baru
+                    # Sudah aktif -> skip
+                    if existing.status == 1:
+                        continue
+
+                    # Sudah ada tapi nonaktif -> aktifkan kembali
+                    conn.execute(text("""
+                        UPDATE modulkelas
+                        SET status = 1,
+                            updated_at = :now
+                        WHERE id_modulkelas = :id_modulkelas
+                    """), {
+                        "id_modulkelas": existing.id_modulkelas,
+                        "now": now
+                    })
+
+                    inserted_count += 1
+                    continue
+
+                # Belum pernah ada -> insert baru
                 conn.execute(text("""
-                    INSERT INTO modulkelas (id_modul, id_paketkelas, status, created_at, updated_at)
-                    VALUES (:id_modul, :id_paketkelas, 1, :now, :now)
+                    INSERT INTO modulkelas
+                    (id_modul, id_paketkelas, status, created_at, updated_at)
+                    VALUES
+                    (:id_modul, :id_paketkelas, 1, :now, :now)
                 """), {
                     "id_modul": id_modul,
                     "id_paketkelas": id_paketkelas,
