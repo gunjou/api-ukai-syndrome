@@ -1,3 +1,4 @@
+# api/utils/config.py
 import os
 import pytz
 from datetime import datetime
@@ -37,6 +38,12 @@ def get_connection():
 # === Mencari Timestamp WITA === #
 def get_wita():
     # wita = pytz.timezone('Asia/Makassar')
+    wib = pytz.timezone('Asia/Jakarta')
+    now_wita = datetime.now(wib)
+    return now_wita.replace(tzinfo=None)
+
+# === Mencari Timestamp WIB === #
+def get_wib():
     wib = pytz.timezone('Asia/Jakarta')
     now_wita = datetime.now(wib)
     return now_wita.replace(tzinfo=None)

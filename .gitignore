@@ -12,6 +12,7 @@ instance/*
 .env
 ListEndpoints.md
 HasilTryout.md
+ListEndpointAttendence.md
 
 ### Flask.Python Stack ###
 # Byte-compiled / optimized / DLL files

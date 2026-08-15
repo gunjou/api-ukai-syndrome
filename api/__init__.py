@@ -29,6 +29,8 @@ from .upload import upload_ns
 from .tryout import tryout_ns
 from .soaltryout import soaltryout_ns
 from .hasiltryout import hasiltryout_ns
+from .jadwal import jadwal_ns
+from .absensi import absensi_ns
 
 
 api = Flask(__name__)
@@ -101,3 +103,5 @@ restx_api.add_namespace(upload_ns, path="/upload")
 restx_api.add_namespace(tryout_ns, path="/tryout")
 restx_api.add_namespace(soaltryout_ns, path="/soal-tryout")
 restx_api.add_namespace(hasiltryout_ns, path="/hasil-tryout")
+restx_api.add_namespace(jadwal_ns, path="/jadwal")
+restx_api.add_namespace(absensi_ns, path="/absensi")

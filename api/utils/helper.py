@@ -8,6 +8,7 @@ from decimal import Decimal
 from datetime import date, datetime, time
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+from math import radians, sin, cos, sqrt, atan2
 
 
 ALLOWED_TAGS = ['p', 'b', 'i', 'u', 'strong', 'em', 'br', 'img', 'div', 'span']
@@ -115,23 +116,30 @@ def serialize_datetime_uuid(row):
     return {k: convert(v) for k, v in dict(row).items()}
 
 def serialize_value(obj):
+    from sqlalchemy.engine import RowMapping
     if isinstance(obj, list):
         return [serialize_value(item) for item in obj]
     if isinstance(obj, dict):
-        return {k: serialize_value(v) for k, v in obj.items()}
-    # SQLAlchemy RowMapping
-    from sqlalchemy.engine import RowMapping
+        return {
+            key: serialize_value(value)
+            for key, value in obj.items()
+        }
     if isinstance(obj, RowMapping):
-        return {k: serialize_value(v) for k, v in dict(obj).items()}
-    # Decimal
+        return {
+            key: serialize_value(value)
+            for key, value in dict(obj).items()
+        }
     if isinstance(obj, Decimal):
         return float(obj)
-    # UUID
     if isinstance(obj, uuid.UUID):
         return str(obj)
-    # Datetime
     if isinstance(obj, datetime):
         return obj.isoformat()
+    if isinstance(obj, date):
+        return obj.isoformat()
+    if isinstance(obj, time):
+        return obj.isoformat()
+
     return obj
 
 
@@ -255,3 +263,28 @@ def normalize_bool_to_int(value):
         return 0
     # Jika input aneh → fallback 0
     return 0
+
+
+
+def calculate_distance_meter(latitude_1, longitude_1, latitude_2, longitude_2):
+    earth_radius = 6371000
+
+    lat_1 = radians(latitude_1)
+    lat_2 = radians(latitude_2)
+
+    delta_lat = radians(latitude_2 - latitude_1)
+    delta_lon = radians(longitude_2 - longitude_1)
+
+    a = (
+        sin(delta_lat / 2) ** 2
+        + cos(lat_1)
+        * cos(lat_2)
+        * sin(delta_lon / 2) ** 2
+    )
+
+    c = 2 * atan2(
+        sqrt(a),
+        sqrt(1 - a)
+    )
+
+    return earth_radius * c
