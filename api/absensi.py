@@ -5,6 +5,7 @@ from flask_jwt_extended import get_jwt_identity, get_jwt
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy.exc import SQLAlchemyError
 
+from .utils.watermark import add_watermark
 from .utils.helper import calculate_distance_meter
 from .utils.decorator import role_required
 from .query.q_absensi import *
@@ -138,6 +139,16 @@ class AbsensiMentorCheckInResource(Resource):
         id_mentor = get_jwt_identity()
         data = mentor_checkin_parser.parse_args()
         id_jadwal = data.get("id_jadwal")
+        
+        user = get_user_nickname(id_mentor)
+
+        if not user:
+            return {
+                "status": "error",
+                "message": "Data mentor tidak ditemukan"
+            }, 404
+
+        nickname = user["nickname"] or user["nama"]
 
         if not id_jadwal:
             return {"status": "error", "message": "id_jadwal wajib diisi"}, 400
@@ -163,43 +174,107 @@ class AbsensiMentorCheckInResource(Resource):
                 if latitude is None or longitude is None:
                     return {
                         "status": "error",
-                        "message": "Latitude dan longitude wajib untuk pertemuan offline"
+                        "message": (
+                            "Latitude dan longitude wajib "
+                            "untuk pertemuan offline"
+                        )
                     }, 400
 
                 if accuracy is None:
                     return {
                         "status": "error",
-                        "message": "Accuracy GPS wajib untuk pertemuan offline"
+                        "message": (
+                            "Accuracy GPS wajib "
+                            "untuk pertemuan offline"
+                        )
                     }, 400
 
                 if not image_file:
                     return {
                         "status": "error",
-                        "message": "Evidence check-in wajib untuk pertemuan offline"
+                        "message": (
+                            "Evidence check-in wajib "
+                            "untuk pertemuan offline"
+                        )
                     }, 400
 
             evidence_url = None
 
             if image_file:
-                cdn_response = requests.post(
-                    f"{CDN_UPLOAD_URL}/absensi",
-                    headers={"X-API-KEY": CDN_API_KEY},
-                    files={"file": (image_file.filename, image_file.stream)}
-                )
+                try:
+                    now = get_wib()
+
+                    watermarked_file, filename, mimetype = add_watermark(
+                        image_file=image_file,
+                        watermark_text=f"CHECK-IN ({nickname.upper()})",
+                        date_text=now.strftime("%d %B %Y"),
+                        time_text=now.strftime("%H:%M:%S WIB"),
+                        latitude=latitude,
+                        longitude=longitude,
+                    )
+
+                except ValueError as e:
+                    return {
+                        "status": "error",
+                        "message": (
+                            f"Gagal memproses evidence: {str(e)}"
+                        )
+                    }, 400
+
+                try:
+                    cdn_response = requests.post(
+                        f"{CDN_UPLOAD_URL}/absensi",
+                        headers={
+                            "X-API-KEY": CDN_API_KEY,
+                        },
+                        files={
+                            "file": (
+                                filename,
+                                watermarked_file,
+                                mimetype,
+                            )
+                        },
+                    )
+
+                except requests.RequestException as e:
+                    print(
+                        "[POST /absensi/mentor/check-in] "
+                        f"CDN Error: {e}"
+                    )
+
+                    return {
+                        "status": "error",
+                        "message": "Gagal menghubungi CDN"
+                    }, 500
 
                 if not cdn_response.ok:
                     return {
                         "status": "error",
-                        "message": "Gagal mengupload evidence ke CDN",
-                        "detail": cdn_response.text
+                        "message": (
+                            "Gagal mengupload evidence ke CDN"
+                        ),
+                        "detail": cdn_response.text,
                     }, 400
 
-                evidence_url = cdn_response.json().get("url")
+                try:
+                    cdn_data = cdn_response.json()
+
+                except ValueError:
+                    return {
+                        "status": "error",
+                        "message": (
+                            "Response CDN tidak valid"
+                        ),
+                    }, 400
+
+                evidence_url = cdn_data.get("url")
 
                 if not evidence_url:
                     return {
                         "status": "error",
-                        "message": "CDN tidak mengembalikan URL gambar"
+                        "message": (
+                            "CDN tidak mengembalikan URL gambar"
+                        ),
                     }, 400
 
             result = insert_absensi_mentor_checkin({
@@ -208,7 +283,7 @@ class AbsensiMentorCheckInResource(Resource):
                 "latitude": latitude,
                 "longitude": longitude,
                 "accuracy": accuracy,
-                "evidence_url": evidence_url
+                "evidence_url": evidence_url,
             })
 
             if not result:
@@ -241,6 +316,16 @@ class AbsensiMentorCheckOutResource(Resource):
         data = mentor_checkout_parser.parse_args()
         id_jadwal = data.get("id_jadwal")
 
+        user = get_user_nickname(id_mentor)
+
+        if not user:
+            return {
+                "status": "error",
+                "message": "Data mentor tidak ditemukan"
+            }, 404
+
+        nickname = user["nickname"] or user["nama"]
+        
         if not id_jadwal:
             return {"status": "error", "message": "id_jadwal wajib diisi"}, 400
 
@@ -305,25 +390,80 @@ class AbsensiMentorCheckOutResource(Resource):
             evidence_url = None
 
             if image_file:
-                cdn_response = requests.post(
-                    f"{CDN_UPLOAD_URL}/absensi",
-                    headers={"X-API-KEY": CDN_API_KEY},
-                    files={"file": (image_file.filename, image_file.stream)}
-                )
+                try:
+                    now = get_wib()
+
+                    watermarked_file, filename, mimetype = add_watermark(
+                        image_file=image_file,
+                        watermark_text=f"CHECK-IN ({nickname.upper()})",
+                        date_text=now.strftime("%d %B %Y"),
+                        time_text=now.strftime("%H:%M:%S WIB"),
+                        latitude=latitude,
+                        longitude=longitude,
+                    )
+
+                except ValueError as e:
+                    return {
+                        "status": "error",
+                        "message": (
+                            f"Gagal memproses evidence: {str(e)}"
+                        )
+                    }, 400
+
+                try:
+                    cdn_response = requests.post(
+                        f"{CDN_UPLOAD_URL}/absensi",
+                        headers={
+                            "X-API-KEY": CDN_API_KEY,
+                        },
+                        files={
+                            "file": (
+                                filename,
+                                watermarked_file,
+                                mimetype,
+                            )
+                        },
+                    )
+
+                except requests.RequestException as e:
+                    print(
+                        "[POST /absensi/mentor/check-in] "
+                        f"CDN Error: {e}"
+                    )
+
+                    return {
+                        "status": "error",
+                        "message": "Gagal menghubungi CDN"
+                    }, 500
 
                 if not cdn_response.ok:
                     return {
                         "status": "error",
-                        "message": "Gagal mengupload evidence ke CDN",
-                        "detail": cdn_response.text
+                        "message": (
+                            "Gagal mengupload evidence ke CDN"
+                        ),
+                        "detail": cdn_response.text,
                     }, 400
 
-                evidence_url = cdn_response.json().get("url")
+                try:
+                    cdn_data = cdn_response.json()
+
+                except ValueError:
+                    return {
+                        "status": "error",
+                        "message": (
+                            "Response CDN tidak valid"
+                        ),
+                    }, 400
+
+                evidence_url = cdn_data.get("url")
 
                 if not evidence_url:
                     return {
                         "status": "error",
-                        "message": "CDN tidak mengembalikan URL gambar"
+                        "message": (
+                            "CDN tidak mengembalikan URL gambar"
+                        ),
                     }, 400
 
             result = update_absensi_mentor_checkout({

@@ -9,6 +9,32 @@ from ..utils.helper import serialize_value
 #                   #ANCHOR - SHARED HELPER (ABSENSI PESERTA)                  #
 # ============================================================================ #
 
+def get_user_nickname(id_user):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT
+                    id_user,
+                    nama,
+                    nickname,
+                    role,
+                    status
+                FROM users
+                WHERE id_user = :id_user
+                  AND status = 1
+            """), {
+                "id_user": id_user
+            }).mappings().fetchone()
+
+            return serialize_value(result) if result else None
+
+    except SQLAlchemyError as e:
+        print(f"[get_user_nickname] Error: {e}")
+        return None
+
+
 def update_absensi_peserta(payload):
     engine = get_connection()
 
