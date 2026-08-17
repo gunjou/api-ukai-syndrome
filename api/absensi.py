@@ -128,6 +128,47 @@ class AbsensiMentorResource(Resource):
             return {"status": "error", "message": "Internal server error"}, 500
 
 
+@absensi_ns.route("/mentor/<int:id_jadwal>/status")
+class AbsensiMentorStatusByJadwalResource(Resource):
+
+    @role_required("mentor")
+    def get(self, id_jadwal):
+        """Akses: mentor, Mengambil status absensi mentor berdasarkan jadwal"""
+
+        id_mentor = get_jwt_identity()
+
+        try:
+            result = get_status_absensi_mentor_by_jadwal(
+                id_jadwal,
+                id_mentor
+            )
+
+            if not result:
+                return {
+                    "status": "error",
+                    "message": (
+                        "Jadwal tidak ditemukan atau "
+                        "bukan jadwal mentor"
+                    )
+                }, 404
+
+            return {
+                "status": "success",
+                "data": result
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(
+                f"[GET /absensi/mentor/{id_jadwal}/status] "
+                f"Error: {e}"
+            )
+
+            return {
+                "status": "error",
+                "message": "Internal server error"
+            }, 500
+
+
 @absensi_ns.route("/mentor/check-in")
 class AbsensiMentorCheckInResource(Resource):
 
@@ -745,7 +786,7 @@ class AbsensiPesertaResource(Resource):
             return {"status": "error", "message": "Internal server error"}, 500
 
 
-@absensi_ns.route("/peserta/<int:id_jadwal>")
+@absensi_ns.route("/peserta/jadwal/<int:id_jadwal>")
 class AbsensiPesertaByJadwalResource(Resource):
 
     @role_required(["admin", "mentor"])

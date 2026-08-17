@@ -160,6 +160,62 @@ def get_absensi_mentor_by_id(id_absensi):
         return None
 
 
+def get_status_absensi_mentor_by_jadwal(id_jadwal, id_mentor):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT
+                    j.id_jadwal,
+                    j.id_paketkelas,
+                    pk.nama_kelas,
+                    j.id_mentor,
+                    u.nama AS nama_mentor,
+                    j.tanggal,
+                    j.waktu_mulai,
+                    j.waktu_selesai,
+                    j.type_pertemuan,
+                    am.id_absensi_mentor,
+                    am.check_in_at,
+                    am.check_out_at,
+                    CASE
+                        WHEN am.id_absensi_mentor IS NULL
+                            THEN 'BELUM_CHECK_IN'
+                        WHEN am.check_in_at IS NOT NULL
+                            AND am.check_out_at IS NULL
+                            THEN 'CHECK_IN'
+                        WHEN am.check_in_at IS NOT NULL
+                            AND am.check_out_at IS NOT NULL
+                            THEN 'SELESAI'
+                    END AS status_absensi
+                FROM jadwal_kelas j
+                INNER JOIN paketkelas pk
+                    ON pk.id_paketkelas = j.id_paketkelas
+                    AND pk.status = 1
+                INNER JOIN users u
+                    ON u.id_user = j.id_mentor
+                    AND u.status = 1
+                LEFT JOIN absensi_mentor am
+                    ON am.id_jadwal = j.id_jadwal
+                    AND am.id_mentor = j.id_mentor
+                    AND am.status = 1
+                WHERE
+                    j.id_jadwal = :id_jadwal
+                    AND j.id_mentor = :id_mentor
+                    AND j.status = 1
+                LIMIT 1
+            """), {
+                "id_jadwal": id_jadwal,
+                "id_mentor": id_mentor
+            }).mappings().fetchone()
+
+            return serialize_value(result) if result else None
+
+    except SQLAlchemyError as e:
+        print(f"[get_status_absensi_mentor_by_jadwal] Error: {e}")
+        return None
+
 
 # ============================================================================ #
 #                      #ANCHOR - ABSENSI MENTOR (CHECK-IN)                     #
