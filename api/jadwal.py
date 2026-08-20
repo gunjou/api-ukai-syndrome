@@ -17,6 +17,8 @@ jadwal_ns = Namespace("jadwal", description="Manajemen Jadwal Kelas")
 jadwal_model = jadwal_ns.model("Jadwal", {
     "id_paketkelas": fields.Integer(required=True, description="ID paket kelas"),
     "id_mentor": fields.Integer(required=True, description="ID mentor"),
+    "topik": fields.String(required=False, description="Topik pertemuan"),
+    "catatan": fields.String(required=False, description="Catatan pertemuan"),
     "tanggal": fields.Date(required=True, description="Tanggal jadwal"),
     "waktu_mulai": fields.String(required=True, description="Waktu mulai, format HH:MM"),
     "waktu_selesai": fields.String(required=True, description="Waktu selesai, format HH:MM"),
@@ -78,6 +80,8 @@ class JadwalListResource(Resource):
 
         id_paketkelas = data["id_paketkelas"]
         id_mentor = data["id_mentor"]
+        topik = data.get("topik")
+        catatan = data.get("catatan")
         tanggal = data["tanggal"]
         waktu_mulai = data["waktu_mulai"]
         waktu_selesai = data["waktu_selesai"]
@@ -111,6 +115,8 @@ class JadwalListResource(Resource):
             result = insert_jadwal({
                 "id_paketkelas": id_paketkelas,
                 "id_mentor": id_mentor,
+                "topik": topik,
+                "catatan": catatan,
                 "tanggal": tanggal,
                 "waktu_mulai": waktu_mulai,
                 "waktu_selesai": waktu_selesai,
@@ -219,6 +225,8 @@ class JadwalResource(Resource):
 
         id_paketkelas = data["id_paketkelas"]
         id_mentor = data["id_mentor"]
+        topik = data.get("topik")
+        catatan = data.get("catatan")
         tanggal = data["tanggal"]
         waktu_mulai = data["waktu_mulai"]
         waktu_selesai = data["waktu_selesai"]
@@ -258,6 +266,8 @@ class JadwalResource(Resource):
                 "id_jadwal": id_jadwal,
                 "id_paketkelas": id_paketkelas,
                 "id_mentor": id_mentor,
+                "topik": topik,
+                "catatan": catatan,
                 "tanggal": tanggal,
                 "waktu_mulai": waktu_mulai,
                 "waktu_selesai": waktu_selesai,

@@ -77,7 +77,7 @@ def get_all_absensi_mentor():
                 SELECT
                     am.id_absensi_mentor, am.id_jadwal,
                     j.id_paketkelas, pk.nama_kelas,
-                    am.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor,
+                    am.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor, j.topik, j.catatan,
                     
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal,
                     COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai) AS waktu_mulai,
@@ -126,7 +126,7 @@ def get_absensi_mentor_by_id(id_absensi):
             result = conn.execute(text("""
                 SELECT
                     am.id_absensi_mentor, am.id_jadwal, j.id_paketkelas, pk.nama_kelas, am.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor,
-                    j.tanggal, j.waktu_mulai, j.waktu_selesai, j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
+                    j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai, j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                     
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
                     COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai) AS waktu_mulai_efektif,
@@ -172,6 +172,8 @@ def get_status_absensi_mentor_by_jadwal(id_jadwal, id_mentor):
                     pk.nama_kelas,
                     j.id_mentor,
                     u.nama AS nama_mentor,
+                    j.topik, 
+                    j.catatan,
                     j.tanggal,
                     j.waktu_mulai,
                     j.waktu_selesai,
@@ -228,7 +230,7 @@ def get_jadwal_absensi_mentor(id_jadwal, id_mentor):
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
-                    j.id_jadwal, j.id_paketkelas, j.id_mentor,
+                    j.id_jadwal, j.id_paketkelas, j.id_mentor, j.topik, j.catatan,
                     j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                     
@@ -399,7 +401,7 @@ def get_all_absensi_peserta():
             result = conn.execute(text("""
                 SELECT
                     ap.id_absensi_peserta, ap.id_jadwal, j.id_paketkelas, pk.nama_kelas,
-                    ap.id_peserta, u.nama AS nama_peserta, u.nickname AS nickname_peserta,
+                    ap.id_peserta, u.nama AS nama_peserta, u.nickname AS nickname_peserta, j.topik, j.catatan,
                     
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal,
                     COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai) AS waktu_mulai,
@@ -447,7 +449,7 @@ def get_absensi_peserta_by_id(id_absensi):
                 SELECT
                     ap.id_absensi_peserta, ap.id_jadwal, j.id_paketkelas, pk.nama_kelas,
                     ap.id_peserta, u.nama AS nama_peserta, u.nickname AS nickname_peserta,
-                    j.tanggal, j.waktu_mulai, j.waktu_selesai,
+                    j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                     
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
@@ -494,7 +496,7 @@ def get_all_absensi_peserta_by_mentor(id_mentor):
                 SELECT
                     ap.id_absensi_peserta, ap.id_jadwal,
                     j.id_paketkelas, pk.nama_kelas,
-                    ap.id_peserta, u.nama AS nama_peserta, u.nickname AS nickname_peserta,
+                    ap.id_peserta, u.nama AS nama_peserta, u.nickname AS nickname_peserta, j.topik, j.catatan,
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal,
                     COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai) AS waktu_mulai,
                     COALESCE(j.waktu_selesai_reschedule, j.waktu_selesai) AS waktu_selesai,
@@ -545,7 +547,7 @@ def get_absensi_peserta_by_id_mentor(id_absensi, id_mentor):
                     ap.id_absensi_peserta, ap.id_jadwal,
                     j.id_paketkelas, pk.nama_kelas,
                     ap.id_peserta, u.nama AS nama_peserta, u.nickname AS nickname_peserta,
-                    j.tanggal, j.waktu_mulai, j.waktu_selesai,
+                    j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                     
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
@@ -659,7 +661,7 @@ def get_jadwal_absensi_peserta(id_jadwal):
             result = conn.execute(text("""
                 SELECT
                     j.id_jadwal, j.id_paketkelas, pk.nama_kelas,
-                    j.id_mentor, u.nama AS nama_mentor,
+                    j.id_mentor, u.nama AS nama_mentor, j.topik, j.catatan,
                     j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
@@ -694,7 +696,7 @@ def get_jadwal_absensi_peserta_by_mentor(id_jadwal, id_mentor):
             result = conn.execute(text("""
                 SELECT
                     j.id_jadwal, j.id_paketkelas, pk.nama_kelas,
-                    j.id_mentor, u.nama AS nama_mentor,
+                    j.id_mentor, u.nama AS nama_mentor, j.topik, j.catatan,
                     j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
@@ -782,7 +784,7 @@ def get_absensi_by_jadwal(id_jadwal):
                 SELECT
                     j.id_jadwal, j.id_paketkelas, pk.nama_kelas,
                     j.id_mentor, um.nama AS nama_mentor, um.nickname AS nickname_mentor,
-                    j.tanggal, j.waktu_mulai, j.waktu_selesai,
+                    j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                     
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
@@ -878,7 +880,7 @@ def get_jadwal_for_manual_attendance(id_jadwal, id_mentor):
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
-                    j.id_jadwal, j.id_paketkelas, j.id_mentor,
+                    j.id_jadwal, j.id_paketkelas, j.id_mentor, j.topik, j.catatan,
                     j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                     j.type_pertemuan

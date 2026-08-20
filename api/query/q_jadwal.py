@@ -124,15 +124,15 @@ def insert_jadwal(payload):
         with engine.begin() as conn:
             result = conn.execute(text("""
                 INSERT INTO jadwal_kelas (
-                    id_paketkelas, id_mentor, tanggal, waktu_mulai, waktu_selesai, type_pertemuan, 
+                    id_paketkelas, id_mentor, topik, catatan, tanggal, waktu_mulai, waktu_selesai, type_pertemuan, 
                     status, created_by, created_at, updated_by, updated_at
                 )
                 VALUES (
-                    :id_paketkelas, :id_mentor, :tanggal, :waktu_mulai, :waktu_selesai, :type_pertemuan, 
+                    :id_paketkelas, :id_mentor, :topik, :catatan, :tanggal, :waktu_mulai, :waktu_selesai, :type_pertemuan, 
                     1, :created_by, :now, :updated_by, :now
                 )
                 RETURNING
-                    id_jadwal, id_paketkelas, id_mentor, tanggal, waktu_mulai, waktu_selesai, type_pertemuan,
+                    id_jadwal, id_paketkelas, id_mentor, topik, catatan, tanggal, waktu_mulai, waktu_selesai, type_pertemuan,
                     status, created_by, created_at, updated_by, updated_at
             """), {
                 **payload,
@@ -165,7 +165,7 @@ def get_all_jadwal(id_mentor=None, id_paketkelas=None):
             result = conn.execute(text(f"""
                 SELECT
                     j.id_jadwal, j.id_paketkelas, pk.nama_kelas,
-                    j.id_mentor, u.nama AS nama_mentor,
+                    j.id_mentor, u.nama AS nama_mentor, j.topik, j.catatan,
                     j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
@@ -204,7 +204,7 @@ def get_jadwal_by_id(id_jadwal):
             result = conn.execute(text("""
                 SELECT
                     j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_mentor, u.nama AS nama_mentor,
-                    j.tanggal, j.waktu_mulai, j.waktu_selesai,
+                    j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                 
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
@@ -241,6 +241,8 @@ def update_jadwal(payload):
                 SET
                     id_paketkelas = :id_paketkelas,
                     id_mentor = :id_mentor,
+                    topik = :topik,
+                    catatan = :catatan,
                     tanggal = :tanggal,
                     waktu_mulai = :waktu_mulai,
                     waktu_selesai = :waktu_selesai,
@@ -335,7 +337,7 @@ def get_all_jadwal_by_mentor(id_mentor):
             result = conn.execute(text("""
                 SELECT
                     j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor,
-                    j.tanggal, j.waktu_mulai, j.waktu_selesai,
+                    j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                     
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
@@ -385,7 +387,7 @@ def get_jadwal_by_id_mentor(id_jadwal, id_mentor):
             result = conn.execute(text("""
                 SELECT
                     j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor,
-                    j.tanggal, j.waktu_mulai, j.waktu_selesai,
+                    j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                 
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
