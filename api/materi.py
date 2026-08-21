@@ -45,6 +45,14 @@ materi_parser.add_argument('page', type=int, default=1, help='Halaman')
 materi_parser.add_argument('limit', type=int, default=20, help='Jumlah data per halaman')
 materi_parser.add_argument('search', type=str, required=False, help='Search judul materi')
 
+materi_progress_monitoring_parser = reqparse.RequestParser()
+materi_progress_monitoring_parser.add_argument( "id_paketkelas", type=int, required=True, help="ID paket kelas wajib diisi")
+materi_progress_monitoring_parser.add_argument( "id_user", type=int, required=False, help="Filter berdasarkan ID peserta")
+materi_progress_monitoring_parser.add_argument( "id_modul", type=int, required=False, help="Filter berdasarkan ID modul")
+materi_progress_monitoring_parser.add_argument( "page", type=int, default=1, required=False, help="Halaman")
+materi_progress_monitoring_parser.add_argument( "limit", type=int, default=20, required=False, help="Jumlah peserta per halaman")
+
+
 @materi_ns.route('')
 class MateriListResource(Resource):
 
@@ -410,3 +418,67 @@ class MateriDownloadableResource(Resource):
 
         except SQLAlchemyError as e:
             return {"status": "error", "message": str(e)}, 500
+
+
+
+@materi_ns.route("/progress/monitoring")
+class MateriProgressMonitoringResource(Resource):
+
+    @materi_ns.expect(materi_progress_monitoring_parser)
+    @role_required(['admin', 'mentor'])
+    def get(self):
+        """Akses: admin, mentor. Monitoring progress materi peserta berdasarkan paket kelas."""
+        try:
+            args = materi_progress_monitoring_parser.parse_args()
+            id_paketkelas = args.get("id_paketkelas")
+            id_user = args.get("id_user")
+            id_modul = args.get("id_modul")
+            page = args.get("page")
+            limit = args.get("limit")
+
+            if page < 1:
+                return {"status": "error", "message": "Page harus lebih besar dari 0"}, 400
+            if limit < 1:
+                return {"status": "error", "message": "Limit harus lebih besar dari 0"}, 400
+            if limit > 100:
+                limit = 100
+
+            if id_paketkelas <= 0:
+                return {"status": "error", "message": "ID paket kelas tidak valid"}, 400
+            if id_user is not None and id_user <= 0:
+                return {"status": "error", "message": "ID user tidak valid"}, 400
+            if id_modul is not None and id_modul <= 0:
+                return {"status": "error", "message": "ID modul tidak valid"}, 400
+
+            result = get_materi_progress_monitoring(
+                id_paketkelas=id_paketkelas,
+                id_user=id_user,
+                id_modul=id_modul,
+                page=page,
+                limit=limit
+            )
+
+            if result is None:
+                return {"status": "error", "message": "Gagal mengambil monitoring progress materi"}, 500
+
+            total = result["total"]
+            total_page = (total + limit - 1) // limit if total > 0 else 0
+
+            return {
+                "status": "success",
+                "data": result["data"],
+                "meta": {
+                    "total": total,
+                    "page": result["page"],
+                    "limit": result["limit"],
+                    "total_page": total_page
+                }
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[MateriProgressMonitoringResource] Database error: {e}")
+            return {"status": "error", "message": "Database error"}, 500
+
+        except Exception as e:
+            print(f"[MateriProgressMonitoringResource] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500

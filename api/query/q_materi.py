@@ -467,3 +467,94 @@ def update_materi_downloadable(id_materi, is_downloadable):
         return None
 
 
+def get_materi_progress_monitoring(id_paketkelas, id_user=None, id_modul=None, page=1, limit=20):
+    """
+    Monitoring progress materi peserta berdasarkan paket kelas.
+
+    Filter:
+    - id_paketkelas: wajib
+    - id_user: optional
+    - id_modul: optional
+
+    Return:
+    {
+        "data": [...],
+        "total": ...,
+        "page": ...,
+        "limit": ...
+    }
+    """
+
+    engine = get_connection()
+    offset = (page - 1) * limit
+
+    try:
+        with engine.connect() as conn:
+            base_query = """
+                FROM pesertakelas ps
+                JOIN users u ON u.id_user = ps.id_user AND u.status = 1
+                JOIN paketkelas pk ON pk.id_paketkelas = ps.id_paketkelas
+                JOIN modulkelas mkls ON mkls.id_paketkelas = pk.id_paketkelas AND mkls.status = 1
+                JOIN modul mo ON mo.id_modul = mkls.id_modul AND mo.status = 1
+                JOIN materi m ON m.id_modul = mo.id_modul AND m.status = 1 AND m.visibility = 'open'
+                LEFT JOIN materi_progress mp ON mp.id_user = ps.id_user AND mp.id_materi = m.id_materi
+                WHERE ps.id_paketkelas = :id_paketkelas AND ps.status = 1
+            """
+
+            params = {"id_paketkelas": id_paketkelas, "limit": limit, "offset": offset}
+
+            if id_user is not None:
+                base_query += " AND ps.id_user = :id_user"
+                params["id_user"] = id_user
+
+            if id_modul is not None:
+                base_query += " AND mo.id_modul = :id_modul"
+                params["id_modul"] = id_modul
+
+            data_query = text(f"""
+                SELECT
+                    ps.id_user,
+                    u.nama,
+                    COUNT(DISTINCT m.id_materi) AS total_materi,
+                    COUNT(DISTINCT mp.id_materi) AS materi_dibuka
+                {base_query}
+                GROUP BY ps.id_user, u.nama
+                ORDER BY u.nama ASC
+                LIMIT :limit OFFSET :offset
+            """)
+
+            rows = conn.execute(data_query, params).mappings().fetchall()
+            data = []
+
+            for row in rows:
+                total_materi = int(row["total_materi"] or 0)
+                materi_dibuka = int(row["materi_dibuka"] or 0)
+                materi_belum_dibuka = total_materi - materi_dibuka
+                progress_percentage = round((materi_dibuka / total_materi) * 100, 2) if total_materi > 0 else 0
+
+                data.append({
+                    "id_user": row["id_user"],
+                    "nama": row["nama"],
+                    "total_materi": total_materi,
+                    "materi_dibuka": materi_dibuka,
+                    "materi_belum_dibuka": materi_belum_dibuka,
+                    "progress_percentage": progress_percentage
+                })
+
+            count_query = text(f"SELECT COUNT(DISTINCT ps.id_user) {base_query}")
+            count_params = {"id_paketkelas": id_paketkelas}
+
+            if id_user is not None:
+                count_params["id_user"] = id_user
+            if id_modul is not None:
+                count_params["id_modul"] = id_modul
+
+            total = conn.execute(count_query, count_params).scalar()
+
+            return {"data": data, "total": total or 0, "page": page, "limit": limit}
+
+    except SQLAlchemyError as e:
+        print(f"[get_materi_progress_monitoring] Error: {e}")
+        return None
+
+
