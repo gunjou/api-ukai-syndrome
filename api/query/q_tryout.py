@@ -22,6 +22,74 @@ def is_valid_paketkelas(id_paketkelas: int):
         return result is not None
 
 
+# ============================================================
+# TUNGGAKAN HELPER
+# ============================================================
+
+def is_mentor_of_paketkelas(id_user: int, id_paketkelas: int):
+    """
+    Cek apakah user merupakan mentor dari paket kelas tertentu.
+    """
+
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT 1
+                FROM mentorkelas mk
+                JOIN paketkelas pk
+                    ON pk.id_paketkelas = mk.id_paketkelas
+                WHERE
+                    mk.id_user = :id_user
+                    AND mk.id_paketkelas = :id_paketkelas
+                    AND mk.status = 1
+                    AND pk.status = 1
+                LIMIT 1
+            """), {
+                "id_user": id_user,
+                "id_paketkelas": id_paketkelas
+            }).first()
+
+            return result is not None
+
+    except SQLAlchemyError as e:
+        print(f"[ERROR is_mentor_of_paketkelas] {e}")
+        return False
+
+
+def is_valid_user_in_paketkelas(id_user: int, id_paketkelas: int):
+    """
+    Cek apakah peserta terdaftar pada paket kelas tertentu.
+    """
+
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT 1
+                FROM pesertakelas ps
+                JOIN paketkelas pk
+                    ON pk.id_paketkelas = ps.id_paketkelas
+                WHERE
+                    ps.id_user = :id_user
+                    AND ps.id_paketkelas = :id_paketkelas
+                    AND ps.status = 1
+                    AND pk.status = 1
+                LIMIT 1
+            """), {
+                "id_user": id_user,
+                "id_paketkelas": id_paketkelas
+            }).first()
+
+            return result is not None
+
+    except SQLAlchemyError as e:
+        print(f"[ERROR is_valid_user_in_paketkelas] {e}")
+        return False
+
+
 """#=== basic CRUD ===#"""
 def get_tryout_list_by_user(id_user: int, role: str):
     engine = get_connection()
@@ -916,3 +984,185 @@ def submit_tryout_attempt(attempt_token: str, id_user: int):
     except SQLAlchemyError as e:
         print(f"[submit_tryout_attempt] Error: {e}")
         return None, "Internal server error"
+
+
+def get_tunggakan_monitoring(id_paketkelas: int, id_user: int = None):
+    """
+    Monitoring tunggakan soal tryout berdasarkan paket kelas.
+
+    Jika id_user tidak diberikan:
+        return summary seluruh peserta dalam kelas.
+
+    Jika id_user diberikan:
+        return detail satu peserta beserta breakdown tryout.
+    """
+
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+
+            # DETAIL SATU PESERTA
+            if id_user is not None:
+                query = text("""
+                    WITH tryout_soal AS (
+                        SELECT t.id_tryout, t.judul, COUNT(DISTINCT st.id_soaltryout) AS total_soal
+                        FROM to_paketkelas tp
+                        JOIN tryout t ON t.id_tryout = tp.id_tryout
+                        LEFT JOIN soaltryout st ON st.id_tryout = t.id_tryout AND st.status = 1
+                        WHERE tp.id_paketkelas = :id_paketkelas
+                          AND tp.status = 1
+                          AND t.status = 1
+                          AND t.visibility = 'open'
+                        GROUP BY t.id_tryout, t.judul
+                    ),
+                    answered_questions AS (
+                        SELECT h.id_tryout, COUNT(DISTINCT question_id) AS soal_dikerjakan
+                        FROM hasiltryout h
+                        CROSS JOIN LATERAL jsonb_object_keys(COALESCE(h.jawaban_user, '{}'::jsonb)) AS question_id
+                        WHERE h.id_user = :id_user
+                          AND h.status = 1
+                          AND h.id_tryout IN (SELECT id_tryout FROM tryout_soal)
+                          AND NULLIF(h.jawaban_user -> question_id ->> 'answer', '') IS NOT NULL
+                        GROUP BY h.id_tryout
+                    )
+                    SELECT
+                        ts.id_tryout,
+                        ts.judul,
+                        ts.total_soal,
+                        COALESCE(aq.soal_dikerjakan, 0) AS soal_dikerjakan
+                    FROM tryout_soal ts
+                    LEFT JOIN answered_questions aq ON aq.id_tryout = ts.id_tryout
+                    ORDER BY ts.id_tryout ASC
+                """)
+
+                rows = conn.execute(
+                    query,
+                    {"id_paketkelas": id_paketkelas, "id_user": id_user}
+                ).mappings().fetchall()
+
+                tryouts = []
+                total_tryout = total_soal = soal_dikerjakan = 0
+
+                for row in rows:
+                    total = int(row["total_soal"] or 0)
+                    answered = min(int(row["soal_dikerjakan"] or 0), total)
+                    outstanding = total - answered
+                    progress = round((answered / total) * 100, 2) if total > 0 else 0
+
+                    tryouts.append({
+                        "id_tryout": row["id_tryout"],
+                        "judul": row["judul"],
+                        "total_soal": total,
+                        "soal_dikerjakan": answered,
+                        "tunggakan": outstanding,
+                        "progress_percentage": progress
+                    })
+
+                    total_tryout += 1
+                    total_soal += total
+                    soal_dikerjakan += answered
+
+                tunggakan = total_soal - soal_dikerjakan
+                progress = round((soal_dikerjakan / total_soal) * 100, 2) if total_soal > 0 else 0
+
+                return {
+                    "id_user": id_user,
+                    "summary": {
+                        "total_tryout": total_tryout,
+                        "total_soal": total_soal,
+                        "soal_dikerjakan": soal_dikerjakan,
+                        "tunggakan": tunggakan,
+                        "progress_percentage": progress
+                    },
+                    "tryouts": tryouts
+                }
+
+            # MONITORING SEMUA PESERTA
+            query = text("""
+                WITH tryout_soal AS (
+                    SELECT t.id_tryout, COUNT(DISTINCT st.id_soaltryout) AS total_soal
+                    FROM to_paketkelas tp
+                    JOIN tryout t ON t.id_tryout = tp.id_tryout
+                    LEFT JOIN soaltryout st ON st.id_tryout = t.id_tryout AND st.status = 1
+                    WHERE tp.id_paketkelas = :id_paketkelas
+                      AND tp.status = 1
+                      AND t.status = 1
+                      AND t.visibility = 'open'
+                    GROUP BY t.id_tryout
+                ),
+                peserta AS (
+                    SELECT DISTINCT ps.id_user, u.nama
+                    FROM pesertakelas ps
+                    JOIN users u ON u.id_user = ps.id_user AND u.status = 1
+                    WHERE ps.id_paketkelas = :id_paketkelas
+                      AND ps.status = 1
+                ),
+                total_kewajiban AS (
+                    SELECT COALESCE(SUM(total_soal), 0) AS total_soal
+                    FROM tryout_soal
+                ),
+                answered_questions AS (
+                    SELECT h.id_user, h.id_tryout, COUNT(DISTINCT question_id) AS soal_dikerjakan
+                    FROM hasiltryout h
+                    CROSS JOIN LATERAL jsonb_object_keys(COALESCE(h.jawaban_user, '{}'::jsonb)) AS question_id
+                    WHERE h.status = 1
+                      AND h.id_user IN (SELECT id_user FROM peserta)
+                      AND h.id_tryout IN (SELECT id_tryout FROM tryout_soal)
+                      AND NULLIF(h.jawaban_user -> question_id ->> 'answer', '') IS NOT NULL
+                    GROUP BY h.id_user, h.id_tryout
+                ),
+                peserta_progress AS (
+                    SELECT
+                        p.id_user,
+                        p.nama,
+                        COALESCE(tk.total_soal, 0) AS total_soal,
+                        COALESCE(SUM(aq.soal_dikerjakan), 0) AS soal_dikerjakan
+                    FROM peserta p
+                    CROSS JOIN total_kewajiban tk
+                    LEFT JOIN answered_questions aq ON aq.id_user = p.id_user
+                    GROUP BY p.id_user, p.nama, tk.total_soal
+                )
+                SELECT id_user, nama, total_soal, soal_dikerjakan
+                FROM peserta_progress
+                ORDER BY (total_soal - soal_dikerjakan) DESC, nama ASC
+            """)
+
+            rows = conn.execute(query, {"id_paketkelas": id_paketkelas}).mappings().fetchall()
+
+            peserta = []
+            total_peserta = total_tunggakan = total_progress = 0
+
+            for row in rows:
+                total = int(row["total_soal"] or 0)
+                answered = min(int(row["soal_dikerjakan"] or 0), total)
+                outstanding = total - answered
+                progress = round((answered / total) * 100, 2) if total > 0 else 0
+
+                peserta.append({
+                    "id_user": row["id_user"],
+                    "nama": row["nama"],
+                    "total_soal": total,
+                    "soal_dikerjakan": answered,
+                    "tunggakan": outstanding,
+                    "progress_percentage": progress
+                })
+
+                total_peserta += 1
+                total_tunggakan += outstanding
+                total_progress += progress
+
+            rata_progress = round(total_progress / total_peserta, 2) if total_peserta > 0 else 0
+
+            return {
+                "summary": {
+                    "total_peserta": total_peserta,
+                    "rata_progress": rata_progress,
+                    "total_tunggakan": total_tunggakan
+                },
+                "peserta": peserta
+            }
+
+    except SQLAlchemyError as e:
+        print(f"[ERROR get_tunggakan_monitoring] {e}")
+        return None

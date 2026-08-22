@@ -43,6 +43,10 @@ tryout_parser.add_argument('page', type=int, default=1)
 tryout_parser.add_argument('limit', type=int, default=20)
 tryout_parser.add_argument('search', type=str, required=False)
 
+tunggakan_monitoring_parser = reqparse.RequestParser()
+tunggakan_monitoring_parser.add_argument('id_paketkelas', type=int, required=True, help='ID paket kelas wajib diisi')
+tunggakan_monitoring_parser.add_argument('id_user', type=int, required=False, help='ID peserta untuk melihat detail tunggakan')
+
 attempt_answer_model = tryout_ns.model("AttemptAnswer", {
     "attempt_token": fields.String(required=True, description="UUID token attempt"),
     "nomor": fields.Integer(required=True, description="Nomor soal (1-based)"),
@@ -414,3 +418,47 @@ class SubmitAttemptResource(Resource):
         except SQLAlchemyError as e:
             print(f"[ENDPOINT submit attempt] {e}")
             return {"message": "Internal server error"}, 500
+
+
+
+# ============================================================
+# TUNGGAKAN MONITORING
+# ============================================================
+
+@tryout_ns.route('/tunggakan/monitoring')
+class TryoutTunggakanMonitoringResource(Resource):
+
+    @jwt_required()
+    @role_required(['admin', 'mentor'])
+    @tryout_ns.expect(tunggakan_monitoring_parser)
+    def get(self):
+        """Akses: admin / mentor. Monitoring tunggakan soal tryout berdasarkan paket kelas."""
+
+        args = tunggakan_monitoring_parser.parse_args()
+        id_paketkelas = args.get('id_paketkelas')
+        id_user = args.get('id_user')
+
+        if id_paketkelas <= 0:
+            return {"status": "error", "message": "ID paket kelas tidak valid"}, 400
+
+        if id_user is not None and id_user <= 0:
+            return {"status": "error", "message": "ID user tidak valid"}, 400
+
+        current_user = get_jwt_identity()
+        current_role = get_jwt().get("role")
+
+        if not is_valid_paketkelas(id_paketkelas):
+            return {"status": "error", "message": "Paket kelas tidak ditemukan"}, 404
+
+        if current_role == 'mentor' and not is_mentor_of_paketkelas(current_user, id_paketkelas):
+            return {"status": "error", "message": "Anda tidak memiliki akses ke paket kelas ini"}, 403
+
+        if id_user is not None and not is_valid_user_in_paketkelas(id_user, id_paketkelas):
+            return {"status": "error", "message": "Peserta tidak terdaftar pada paket kelas ini"}, 404
+
+        result = get_tunggakan_monitoring(id_paketkelas=id_paketkelas, id_user=id_user)
+
+        if result is None:
+            return {"status": "error", "message": "Gagal mengambil monitoring tunggakan"}, 500
+
+        return {"status": "success", "data": result}, 200
