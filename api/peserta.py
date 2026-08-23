@@ -70,6 +70,14 @@ class PesertaListResource(Resource):
             payload["email"] = valid.email
         except EmailNotValidError as e:
             return {"status": "error", "message": str(e)}, 400
+        
+        # Cek email duplicate
+        existing_user = check_email_exists(payload["email"])
+        if existing_user:
+            return {
+                "status": "error",
+                "message": f"Email {payload['email']} sudah terdaftar"
+            }, 400
 
         try:
             new_peserta = insert_peserta_with_batch_kelas(payload)
@@ -285,7 +293,6 @@ class PesertaDetailResource(Resource):
 
         # 🔹 Validasi email duplikat (kalau email diganti)
         if "email" in data and data["email"] != old_data["email"]:
-            from query.q_peserta import check_email_exists
             if check_email_exists(data["email"], exclude_id=id_peserta):
                 return {"status": "error", "message": f"Email {data['email']} sudah digunakan"}, 400
 

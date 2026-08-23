@@ -10,6 +10,34 @@ from werkzeug.security import generate_password_hash
 from ..utils.helper import serialize_row
 from ..utils.config import get_connection, get_wita
 
+
+# ============================== HELPER FUNCTION ============================= #
+def check_email_exists(email, exclude_id=None):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as connection:
+            query = """
+                SELECT id_user, nama, email FROM users WHERE email = :email AND status = 1
+            """
+
+            params = {"email": email}
+
+            # Digunakan ketika update,
+            # supaya email milik dirinya sendiri tidak dianggap duplicate
+            if exclude_id is not None:
+                query += " AND id_user != :exclude_id"
+                params["exclude_id"] = exclude_id
+
+            result = connection.execute(text(query), params).mappings().fetchone()
+
+            return result
+
+    except SQLAlchemyError as e:
+        print(f"[ERROR check_email_exists] {e}")
+        return None
+
+
 def get_all_peserta():
     engine = get_connection()
     try:
