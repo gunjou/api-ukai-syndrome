@@ -1,10 +1,12 @@
-from flask import request
+from flask import request, send_file
+from werkzeug.datastructures import FileStorage
 from flask_jwt_extended import get_jwt_identity, get_jwt
-from flask_restx import Namespace, Resource, fields
+from flask_restx import Namespace, Resource, fields, reqparse
 from sqlalchemy.exc import SQLAlchemyError
 
 from .utils.decorator import role_required
 from .query.q_jadwal import *
+from .query.q_jadwal_bulk import *
 
 
 jadwal_ns = Namespace("jadwal", description="Manajemen Jadwal Kelas")
@@ -33,6 +35,15 @@ reschedule_model = jadwal_ns.model("JadwalReschedule", {
 })
 
 
+bulk_import_response_model = jadwal_ns.model("BulkImportResponse", {
+    "import_id": fields.String(description="ID import untuk proses preview/commit"),
+    "total_rows": fields.Integer(description="Jumlah total row"),
+    "valid_rows": fields.Integer(description="Jumlah row valid"),
+    "invalid_rows": fields.Integer(description="Jumlah row invalid"),
+    "status": fields.String(description="Status import")
+})
+
+
 
 # ============================================================================ #
 #                                #ANCHOR - PARSER                              #
@@ -45,6 +56,10 @@ jadwal_parser.add_argument("id_paketkelas", type=int, required=False, location="
 
 mentor_dropdown_parser = jadwal_ns.parser()
 mentor_dropdown_parser.add_argument("id_paketkelas", type=int, required=False, location="args", help="Filter mentor berdasarkan ID paket kelas")
+
+
+bulk_jadwal_parser = reqparse.RequestParser()
+bulk_jadwal_parser.add_argument("file", type=FileStorage, location="files", required=True, help="File jadwal dalam format CSV atau XLSX")
 
 
 
@@ -412,3 +427,392 @@ class MentorDropdownResource(Resource):
         except SQLAlchemyError as e:
             print(f"[GET /jadwal/mentor-dropdown] Error: {e}")
             return {"status": "error", "message": "Internal server error"}, 500
+
+
+
+# ============================================================================ #
+#                         BULK IMPORT JADWAL                                  #
+# ============================================================================ #
+
+bulk_import_response_model = jadwal_ns.model("BulkImportResponse", {
+    "import_id": fields.String(
+        description="ID import untuk proses preview/commit"
+    ),
+    "total_rows": fields.Integer(
+        description="Jumlah total row"
+    ),
+    "valid_rows": fields.Integer(
+        description="Jumlah row valid"
+    ),
+    "invalid_rows": fields.Integer(
+        description="Jumlah row invalid"
+    ),
+    "status": fields.String(
+        description="Status import"
+    )
+})
+
+
+# ============================================================================ #
+#                        BULK IMPORT - VALIDATE                                #
+# ============================================================================ #
+
+@jadwal_ns.route("/bulk/validate")
+class JadwalBulkValidateResource(Resource):
+
+    @role_required("admin")
+    @jadwal_ns.expect(bulk_jadwal_parser)
+    def post(self):
+        """
+        Akses: admin
+
+        Upload CSV/XLSX untuk divalidasi.
+
+        Endpoint ini TIDAK melakukan insert ke jadwal_kelas.
+        """
+
+        id_user = get_jwt_identity()
+        file = request.files.get("file")
+
+        # ------------------------------------------------------------------ #
+        # VALIDASI FILE
+        # ------------------------------------------------------------------ #
+
+        if not file:
+            return {
+                "status": "error",
+                "message": "File wajib diupload"
+            }, 400
+
+        if not file.filename:
+            return {
+                "status": "error",
+                "message": "File tidak boleh kosong"
+            }, 400
+
+        # ------------------------------------------------------------------ #
+        # VALIDASI EXTENSION
+        # ------------------------------------------------------------------ #
+
+        filename = file.filename.lower()
+
+        allowed_extensions = {
+            ".csv",
+            ".xlsx"
+        }
+
+        if "." not in filename:
+            return {
+                "status": "error",
+                "message": "Format file tidak didukung"
+            }, 400
+
+        extension = "." + filename.rsplit(".", 1)[1]
+
+        if extension not in allowed_extensions:
+            return {
+                "status": "error",
+                "message": (
+                    "File harus berformat CSV atau XLSX"
+                )
+            }, 400
+
+        try:
+            result = validate_bulk_jadwal(
+                file=file,
+                filename=file.filename,
+                id_user=id_user
+            )
+
+            if not result:
+                return {
+                    "status": "error",
+                    "message": "Gagal melakukan validasi file"
+                }, 400
+
+            # ============================================================= #
+            # INVALID
+            # ============================================================= #
+
+            if result.get("status") == "INVALID":
+                return {
+                    "status": "error",
+                    "message": (
+                        "File memiliki data yang tidak valid"
+                    ),
+                    "data": {
+                        "import_id": result.get("import_id"),
+                        "total_rows": result.get(
+                            "total_rows",
+                            0
+                        ),
+                        "valid_rows": result.get(
+                            "valid_rows",
+                            0
+                        ),
+                        "invalid_rows": result.get(
+                            "invalid_rows",
+                            0
+                        ),
+                        "errors": result.get(
+                            "errors",
+                            []
+                        )
+                    }
+                }, 422
+
+            # ============================================================= #
+            # VALID
+            # ============================================================= #
+
+            return {
+                "status": "success",
+                "message": (
+                    "File valid dan siap di-import"
+                ),
+                "data": {
+                    "import_id": result.get(
+                        "import_id"
+                    ),
+                    "total_rows": result.get(
+                        "total_rows",
+                        0
+                    ),
+                    "valid_rows": result.get(
+                        "valid_rows",
+                        0
+                    ),
+                    "invalid_rows": result.get(
+                        "invalid_rows",
+                        0
+                    ),
+                    "preview": result.get(
+                        "preview",
+                        []
+                    )
+                }
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(
+                f"[POST /jadwal/bulk/validate] "
+                f"Error: {e}"
+            )
+
+            return {
+                "status": "error",
+                "message": "Internal server error"
+            }, 500
+
+        except Exception as e:
+            print(
+                f"[POST /jadwal/bulk/validate] "
+                f"Unexpected Error: {e}"
+            )
+
+            return {
+                "status": "error",
+                "message": "Gagal memproses file"
+            }, 500
+
+
+# ============================================================================ #
+#                        BULK IMPORT - DETAIL                                  #
+# ============================================================================ #
+
+@jadwal_ns.route("/bulk/<string:import_id>")
+class JadwalBulkDetailResource(Resource):
+
+    @role_required("admin")
+    def get(self, import_id):
+        """
+        Akses: admin
+
+        Mengambil hasil validation berdasarkan import_id.
+
+        Digunakan untuk:
+        - melihat hasil import
+        - melihat error per row
+        - melihat preview data
+        - mengecek apakah import sudah siap di-commit
+        """
+
+        try:
+            result = get_bulk_jadwal_import(import_id)
+
+            if not result:
+                return {
+                    "status": "error",
+                    "message": "Data import tidak ditemukan"
+                }, 404
+
+            return {
+                "status": "success",
+                "data": result
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /jadwal/bulk/{import_id}] Error: {e}")
+
+            return {
+                "status": "error",
+                "message": "Internal server error"
+            }, 500
+
+        except Exception as e:
+            print(f"[GET /jadwal/bulk/{import_id}] Unexpected Error: {e}")
+
+            return {
+                "status": "error",
+                "message": "Gagal mengambil data import"
+            }, 500
+
+
+# ============================================================================ #
+#                        BULK IMPORT - COMMIT                                  #
+# ============================================================================ #
+
+@jadwal_ns.route("/bulk/<string:import_id>/commit")
+class JadwalBulkCommitResource(Resource):
+
+    @role_required("admin")
+    def post(self, import_id):
+        """
+        Akses: admin
+
+        Melakukan commit terhadap hasil bulk import.
+
+        HANYA import dengan status VALID yang boleh di-commit.
+
+        Seluruh row akan dimasukkan dalam satu transaction.
+
+        Jika satu row gagal:
+        -> seluruh transaction di-rollback
+        -> tidak ada jadwal yang masuk sebagian.
+        """
+
+        id_user = get_jwt_identity()
+
+        try:
+            # ============================================================= #
+            # TODO:
+            # Fungsi ini nanti akan dibuat di q_jadwal.py
+            #
+            # result = commit_bulk_jadwal(
+            #     import_id=import_id,
+            #     id_user=id_user
+            # )
+            # ============================================================= #
+
+            result = commit_bulk_jadwal(
+                import_id=import_id,
+                id_user=id_user
+            )
+
+            if not result:
+                return {
+                    "status": "error",
+                    "message": "Gagal melakukan import jadwal"
+                }, 400
+
+            if result.get("status") == "NOT_FOUND":
+                return {
+                    "status": "error",
+                    "message": "Data import tidak ditemukan"
+                }, 404
+
+            if result.get("status") == "INVALID":
+                return {
+                    "status": "error",
+                    "message": (
+                        "Import tidak dapat dilakukan karena "
+                        "data belum valid"
+                    )
+                }, 422
+
+            if result.get("status") == "ALREADY_COMMITTED":
+                return {
+                    "status": "error",
+                    "message": "Import ini sudah pernah di-commit"
+                }, 409
+
+            if result.get("status") == "EXPIRED":
+                return {
+                    "status": "error",
+                    "message": "Data import sudah expired"
+                }, 410
+
+            return {
+                "status": "success",
+                "message": "Bulk jadwal berhasil di-import",
+                "data": {
+                    "import_id": import_id,
+                    "total_rows": result.get("total_rows", 0),
+                    "inserted_rows": result.get("inserted_rows", 0)
+                }
+            }, 201
+
+        except SQLAlchemyError as e:
+            print(f"[POST /jadwal/bulk/{import_id}/commit] Error: {e}")
+
+            return {
+                "status": "error",
+                "message": "Internal server error"
+            }, 500
+
+        except Exception as e:
+            print(
+                f"[POST /jadwal/bulk/{import_id}/commit] "
+                f"Unexpected Error: {e}"
+            )
+
+            return {
+                "status": "error",
+                "message": "Gagal melakukan import jadwal"
+            }, 500
+
+
+# ============================================================================ #
+#                          BULK IMPORT - TEMPLATE                              #
+# ============================================================================ #
+
+@jadwal_ns.route("/bulk/template")
+class JadwalBulkTemplateResource(Resource):
+
+    @role_required("admin")
+    def get(self):
+        """
+        Akses: admin
+
+        Download template XLSX untuk bulk import jadwal.
+        """
+
+        try:
+            template_path = get_bulk_jadwal_template()
+
+            if not template_path:
+                return {
+                    "status": "error",
+                    "message": "Template tidak ditemukan"
+                }, 404
+
+            return send_file(
+                template_path,
+                as_attachment=True,
+                download_name="template_import_jadwal.xlsx",
+                mimetype=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                )
+            )
+
+        except Exception as e:
+            print(
+                f"[GET /jadwal/bulk/template] "
+                f"Unexpected Error: {e}"
+            )
+
+            return {
+                "status": "error",
+                "message": "Gagal mengambil template"
+            }, 500
