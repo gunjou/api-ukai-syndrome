@@ -1262,7 +1262,7 @@ def commit_bulk_jadwal(import_id, id_user):
 
             for detail in details:
 
-                result = conn.execute(text("""
+                id_jadwal = conn.execute(text("""
                     INSERT INTO jadwal_kelas (
                         id_paketkelas,
                         id_mentor,
@@ -1307,13 +1307,19 @@ def commit_bulk_jadwal(import_id, id_user):
                     "created_at": now,
                     "updated_by": id_user,
                     "updated_at": now
-                }).scalar()
+                }).scalar_one()
 
-                if not result:
-                    raise SQLAlchemyError(
-                        f"Gagal insert row "
-                        f"{detail['row_number']}"
-                    )
+                # Simpan relasi import_detail -> jadwal_kelas
+                conn.execute(text("""
+                    UPDATE jadwal_import_detail
+                    SET id_jadwal = :id_jadwal
+                    WHERE id_detail = :id_detail
+                    AND id_import = :id_import
+                """), {
+                    "id_jadwal": id_jadwal,
+                    "id_detail": detail["id_detail"],
+                    "id_import": import_id
+                })
 
                 inserted_rows += 1
 
@@ -1346,3 +1352,204 @@ def commit_bulk_jadwal(import_id, id_user):
         print(f"[commit_bulk_jadwal] Error: {e}")
         raise
 
+
+
+def get_bulk_jadwal_history():
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+
+            result = conn.execute(text("""
+                SELECT
+                    ji.id_import,
+                    ji.file_name,
+                    ji.status,
+                    ji.total_rows,
+                    ji.valid_rows,
+                    ji.invalid_rows,
+                    ji.created_by,
+                    ji.created_at,
+                    ji.updated_at,
+
+                    COUNT(jid.id_jadwal) AS inserted_rows
+
+                FROM jadwal_import ji
+
+                LEFT JOIN jadwal_import_detail jid
+                    ON jid.id_import = ji.id_import
+                    AND jid.id_jadwal IS NOT NULL
+
+                WHERE ji.status IN (
+                    'COMMITTED'
+                )
+
+                GROUP BY
+                    ji.id_import,
+                    ji.file_name,
+                    ji.status,
+                    ji.total_rows,
+                    ji.valid_rows,
+                    ji.invalid_rows,
+                    ji.created_by,
+                    ji.created_at,
+                    ji.updated_at
+
+                ORDER BY ji.created_at DESC
+            """)).mappings().fetchall()
+
+            return [
+                serialize_value(row)
+                for row in result
+            ]
+
+    except SQLAlchemyError as e:
+        print(
+            f"[get_bulk_jadwal_history] Error: {e}"
+        )
+        raise
+
+
+
+def rollback_bulk_jadwal(import_id, id_user):
+    engine = get_connection()
+
+    try:
+        with engine.begin() as conn:
+
+            # ============================================================ #
+            # LOCK IMPORT
+            # ============================================================ #
+
+            import_result = conn.execute(text("""
+                SELECT
+                    id_import,
+                    status,
+                    total_rows,
+                    valid_rows,
+                    invalid_rows
+                FROM jadwal_import
+                WHERE id_import = :id_import
+                FOR UPDATE
+            """), {
+                "id_import": import_id
+            }).mappings().fetchone()
+
+            if not import_result:
+                return {
+                    "status": "NOT_FOUND"
+                }
+
+            # ============================================================ #
+            # STATUS CHECK
+            # ============================================================ #
+
+            if import_result["status"] == "ROLLED_BACK":
+                return {
+                    "status": "ALREADY_ROLLED_BACK"
+                }
+
+            if import_result["status"] != "COMMITTED":
+                return {
+                    "status": "NOT_COMMITTED"
+                }
+
+            # ============================================================ #
+            # GET JADWAL YANG BERASAL DARI IMPORT
+            # ============================================================ #
+
+            details = conn.execute(text("""
+                SELECT
+                    id_detail,
+                    row_number,
+                    id_jadwal
+                FROM jadwal_import_detail
+                WHERE id_import = :id_import
+                  AND id_jadwal IS NOT NULL
+                ORDER BY row_number ASC
+                FOR UPDATE
+            """), {
+                "id_import": import_id
+            }).mappings().fetchall()
+
+            if not details:
+                return {
+                    "status": "NO_DATA"
+                }
+
+            jadwal_ids = [
+                detail["id_jadwal"]
+                for detail in details
+                if detail["id_jadwal"] is not None
+            ]
+
+            # ============================================================ #
+            # DELETE JADWAL
+            # ============================================================ #
+
+            deleted_rows = 0
+
+            if jadwal_ids:
+
+                result = conn.execute(text("""
+                    DELETE FROM jadwal_kelas
+                    WHERE id_jadwal = ANY(:jadwal_ids)
+                    RETURNING id_jadwal
+                """), {
+                    "jadwal_ids": jadwal_ids
+                })
+
+                deleted_ids = result.scalars().all()
+
+                deleted_rows = len(deleted_ids)
+
+            # ============================================================ #
+            # UPDATE DETAIL
+            # ============================================================ #
+
+            conn.execute(text("""
+                UPDATE jadwal_import_detail
+                SET id_jadwal = NULL
+                WHERE id_import = :id_import
+            """), {
+                "id_import": import_id
+            })
+
+            # ============================================================ #
+            # UPDATE IMPORT STATUS
+            # ============================================================ #
+
+            now = get_wib()
+
+            conn.execute(text("""
+                UPDATE jadwal_import
+                SET
+                    status = 'ROLLED_BACK',
+                    updated_at = :updated_at
+                WHERE id_import = :id_import
+            """), {
+                "id_import": import_id,
+                "updated_at": now
+            })
+
+            return {
+                "status": "ROLLED_BACK",
+                "total_rows": import_result["total_rows"],
+                "deleted_rows": deleted_rows
+            }
+
+    except SQLAlchemyError as e:
+
+        print(
+            f"[rollback_bulk_jadwal] Error: {e}"
+        )
+
+        raise
+
+    except Exception as e:
+
+        print(
+            f"[rollback_bulk_jadwal] Error: {e}"
+        )
+
+        raise

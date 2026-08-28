@@ -816,3 +816,161 @@ class JadwalBulkTemplateResource(Resource):
                 "status": "error",
                 "message": "Gagal mengambil template"
             }, 500
+
+
+
+# ============================================================================ #
+#                        BULK IMPORT - HISTORY                                #
+# ============================================================================ #
+
+@jadwal_ns.route("/bulk/history")
+class JadwalBulkHistoryResource(Resource):
+
+    @role_required("admin")
+    def get(self):
+        """
+        Akses: admin
+
+        Mengambil history bulk import jadwal
+        yang sudah COMMITTED atau ROLLED_BACK.
+        """
+
+        try:
+
+            result = get_bulk_jadwal_history()
+
+            return {
+                "status": "success",
+                "data": result
+            }, 200
+
+        except SQLAlchemyError as e:
+
+            print(
+                f"[GET /jadwal/bulk/history] Error: {e}"
+            )
+
+            return {
+                "status": "error",
+                "message": "Internal server error"
+            }, 500
+
+        except Exception as e:
+
+            print(
+                f"[GET /jadwal/bulk/history] "
+                f"Unexpected Error: {e}"
+            )
+
+            return {
+                "status": "error",
+                "message": "Gagal mengambil history import"
+            }, 500
+
+
+
+# ============================================================================ #
+#                        BULK IMPORT - ROLLBACK                               #
+# ============================================================================ #
+
+@jadwal_ns.route("/bulk/<string:import_id>/rollback")
+class JadwalBulkRollbackResource(Resource):
+
+    @role_required("admin")
+    def post(self, import_id):
+        """
+        Akses: admin
+
+        Membatalkan hasil bulk import yang sudah COMMITTED.
+
+        Semua jadwal_kelas yang dibuat oleh import tersebut
+        akan dihapus dalam satu transaction.
+
+        History import tetap dipertahankan dengan status
+        ROLLED_BACK.
+        """
+
+        id_user = get_jwt_identity()
+
+        try:
+
+            result = rollback_bulk_jadwal(
+                import_id=import_id,
+                id_user=id_user
+            )
+
+            if not result:
+                return {
+                    "status": "error",
+                    "message": "Gagal melakukan rollback"
+                }, 400
+
+            if result.get("status") == "NOT_FOUND":
+                return {
+                    "status": "error",
+                    "message": "Data import tidak ditemukan"
+                }, 404
+
+            if result.get("status") == "NOT_COMMITTED":
+                return {
+                    "status": "error",
+                    "message": (
+                        "Import belum berstatus COMMITTED "
+                        "sehingga tidak dapat di-rollback"
+                    )
+                }, 422
+
+            if result.get("status") == "ALREADY_ROLLED_BACK":
+                return {
+                    "status": "error",
+                    "message": "Import ini sudah pernah di-rollback"
+                }, 409
+
+            if result.get("status") == "NO_DATA":
+                return {
+                    "status": "error",
+                    "message": (
+                        "Tidak ditemukan jadwal "
+                        "hasil import yang dapat di-rollback"
+                    )
+                }, 422
+
+            return {
+                "status": "success",
+                "message": "Bulk import berhasil di-rollback",
+                "data": {
+                    "import_id": import_id,
+                    "total_rows": result.get(
+                        "total_rows",
+                        0
+                    ),
+                    "deleted_rows": result.get(
+                        "deleted_rows",
+                        0
+                    )
+                }
+            }, 200
+
+        except SQLAlchemyError as e:
+
+            print(
+                f"[POST /jadwal/bulk/{import_id}/rollback] "
+                f"Error: {e}"
+            )
+
+            return {
+                "status": "error",
+                "message": "Internal server error"
+            }, 500
+
+        except Exception as e:
+
+            print(
+                f"[POST /jadwal/bulk/{import_id}/rollback] "
+                f"Unexpected Error: {e}"
+            )
+
+            return {
+                "status": "error",
+                "message": "Gagal melakukan rollback"
+            }, 500
