@@ -162,6 +162,54 @@ class AssignKelasResource(Resource):
             return {"status": "error", "message": str(e)}, 500
 
 
+@mentorkelas_ns.route('/assign-mentor/<int:id_paketkelas>')
+class AssignMentorResource(Resource):
+
+    @role_required('admin')
+    def post(self, id_paketkelas):
+        """
+        Akses: admin
+        Assign satu atau banyak mentor ke satu kelas.
+
+        Body:
+        {
+            "id_mentor": [1, 2, 5, 8]
+        }
+        """
+
+        data = request.get_json() or {}
+        id_mentor_list = data.get("id_mentor", [])
+
+        if not isinstance(id_mentor_list, list) or not id_mentor_list:
+            return {
+                "status": "error",
+                "message": "id_mentor harus berupa array dan tidak boleh kosong"
+            }, 400
+
+        try:
+            inserted_count = assign_mentor_to_kelas(
+                id_paketkelas,
+                id_mentor_list
+            )
+
+            if inserted_count == 0:
+                return {
+                    "status": "error",
+                    "message": "Tidak ada mentor yang berhasil diassign"
+                }, 400
+
+            return {
+                "status": "success",
+                "message": f"{inserted_count} mentor berhasil diassign ke kelas {id_paketkelas}"
+            }, 201
+
+        except SQLAlchemyError as e:
+            return {
+                "status": "error",
+                "message": str(e)
+            }, 500
+
+
 @mentorkelas_ns.route('/kelas/<int:id_mentorkelas>')
 class DeleteKelasResource(Resource):
     @role_required('admin')

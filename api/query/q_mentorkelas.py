@@ -274,6 +274,59 @@ def assign_kelas_to_mentor(id_mentor, id_paketkelas_list):
     except SQLAlchemyError as e:
         print(f"[assign_kelas_to_mentor] Error: {e}")
         return 0
+
+
+# q_mentorkelas.py
+
+def assign_mentor_to_kelas(id_paketkelas, id_mentor_list):
+    """
+    Assign satu atau banyak mentor ke satu kelas.
+    """
+    engine = get_connection()
+
+    try:
+        with engine.begin() as conn:
+            now = get_wita()
+            inserted_count = 0
+
+            for id_mentor in id_mentor_list:
+
+                # Cek apakah mentor sudah terdaftar di kelas ini
+                existing = conn.execute(text("""
+                    SELECT 1
+                    FROM mentorkelas
+                    WHERE id_user = :id_mentor
+                      AND id_paketkelas = :id_paketkelas
+                      AND status = 1
+                """), {
+                    "id_mentor": id_mentor,
+                    "id_paketkelas": id_paketkelas
+                }).fetchone()
+
+                if existing:
+                    continue
+
+                # Insert relasi baru
+                conn.execute(text("""
+                    INSERT INTO mentorkelas (
+                        id_user, id_paketkelas, status, created_at, updated_at
+                    )
+                    VALUES (
+                        :id_mentor, :id_paketkelas, 1, :now, :now
+                    )
+                """), {
+                    "id_mentor": id_mentor,
+                    "id_paketkelas": id_paketkelas,
+                    "now": now
+                })
+
+                inserted_count += 1
+
+            return inserted_count
+
+    except SQLAlchemyError as e:
+        print(f"[assign_mentor_to_kelas] Error: {e}")
+        return 0
     
 def delete_kelas_in_mentor(id_mentorkelas):
     engine = get_connection()
