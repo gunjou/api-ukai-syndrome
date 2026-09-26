@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from flask import request, send_file
 from werkzeug.datastructures import FileStorage
 from flask_jwt_extended import get_jwt_identity, get_jwt
@@ -44,6 +46,12 @@ bulk_import_response_model = jadwal_ns.model("BulkImportResponse", {
 })
 
 
+switch_mentor_model = jadwal_ns.model("SwitchMentor", {
+    "id_jadwal_1": fields.Integer(required=True, description="ID jadwal pertama"),
+    "id_jadwal_2": fields.Integer(required=True, description="ID jadwal kedua")
+})
+
+
 
 # ============================================================================ #
 #                                #ANCHOR - PARSER                              #
@@ -52,6 +60,11 @@ bulk_import_response_model = jadwal_ns.model("BulkImportResponse", {
 jadwal_parser = jadwal_ns.parser()
 jadwal_parser.add_argument("id_mentor", type=int, required=False, location="args", help="Filter berdasarkan ID mentor")
 jadwal_parser.add_argument("id_paketkelas", type=int, required=False, location="args", help="Filter berdasarkan ID paket kelas")
+jadwal_parser.add_argument("search", type=str, required=False, location="args", help="Pencarian berdasarkan nama mentor, nama kelas, topik, atau catatan")
+jadwal_parser.add_argument("start_date", type=str, required=False, location="args", help="Tanggal awal periode (YYYY-MM-DD)")
+jadwal_parser.add_argument("end_date", type=str, required=False, location="args", help="Tanggal akhir periode (YYYY-MM-DD)")
+jadwal_parser.add_argument("page", type=int, required=False, default=1, location="args", help="Halaman")
+jadwal_parser.add_argument("per_page", type=int, required=False, default=50, location="args", help="Jumlah data per halaman, maksimum 100")
 
 
 mentor_dropdown_parser = jadwal_ns.parser()
@@ -157,31 +170,106 @@ class JadwalListResource(Resource):
     @role_required(["admin", "mentor"])
     @jadwal_ns.expect(jadwal_parser)
     def get(self):
-        """Akses: admin/mentor, Mengambil daftar jadwal"""
+        """Akses: admin/mentor, Mengambil daftar jadwal."""
 
         id_user = get_jwt_identity()
 
         try:
             role = get_jwt()["role"]
             args = jadwal_parser.parse_args()
+            search = args.get("search")
 
             if role == "admin":
+                id_mentor = args.get("id_mentor")
+                id_paketkelas = args.get("id_paketkelas")
+                start_date = args.get("start_date")
+                end_date = args.get("end_date")
+                page = args.get("page") or 1
+                per_page = args.get("per_page") or 50
+
+                if page < 1:
+                    return {
+                        "status": "error",
+                        "message": "Parameter page harus lebih besar dari 0"
+                    }, 400
+
+                if not 1 <= per_page <= 100:
+                    return {
+                        "status": "error",
+                        "message": "Parameter per_page harus berada antara 1 dan 100"
+                    }, 400
+
+                if not start_date or not end_date:
+                    today = datetime.now().date()
+                    start_date = today.replace(day=1)
+
+                    if today.month == 12:
+                        end_date = today.replace(
+                            year=today.year + 1, month=1, day=1
+                        ) - timedelta(days=1)
+                    else:
+                        end_date = today.replace(
+                            month=today.month + 1, day=1
+                        ) - timedelta(days=1)
+
+                try:
+                    start_date = datetime.strptime(str(start_date), "%Y-%m-%d").date()
+                    end_date = datetime.strptime(str(end_date), "%Y-%m-%d").date()
+                except ValueError:
+                    return {
+                        "status": "error",
+                        "message": "Format tanggal harus YYYY-MM-DD"
+                    }, 400
+
+                if start_date > end_date:
+                    return {
+                        "status": "error",
+                        "message": "start_date tidak boleh lebih besar dari end_date"
+                    }, 400
+
                 result = get_all_jadwal(
-                    id_mentor=args.get("id_mentor"),
-                    id_paketkelas=args.get("id_paketkelas")
+                    id_mentor=id_mentor,
+                    id_paketkelas=id_paketkelas,
+                    search=search,
+                    start_date=start_date,
+                    end_date=end_date,
+                    page=page,
+                    per_page=per_page
                 )
-            else:
-                result = get_all_jadwal_by_mentor(id_user)
+
+                return {
+                    "status": "success",
+                    "data": result["data"],
+                    "meta": {
+                        "page": result["page"],
+                        "per_page": result["per_page"],
+                        "total": result["total"],
+                        "total_pages": result["total_pages"],
+                        "start_date": start_date.isoformat(),
+                        "end_date": end_date.isoformat()
+                    }
+                }, 200
+
+            result = get_all_jadwal_by_mentor(
+                id_mentor=id_user,
+                search=search
+            )
 
             return {
                 "status": "success",
                 "data": result,
-                "meta": {"total": len(result)}
+                "meta": {
+                    "total": len(result)
+                }
             }, 200
 
         except SQLAlchemyError as e:
             print(f"[GET /jadwal] Error: {e}")
-            return {"status": "error", "message": "Internal server error"}, 500
+
+            return {
+                "status": "error",
+                "message": "Internal server error"
+            }, 500
 
 
 
@@ -396,6 +484,85 @@ class JadwalResource(Resource):
         except SQLAlchemyError as e:
             print(f"[DELETE /jadwal/{id_jadwal}] Error: {e}")
             return {"status": "error", "message": "Internal server error"}, 500
+
+
+
+@jadwal_ns.route("/switch-mentor")
+class JadwalSwitchMentorResource(Resource):
+
+    @role_required(["admin", "mentor"])
+    @jadwal_ns.expect(switch_mentor_model)
+    def patch(self):
+        """Akses: admin/mentor, Menukar mentor antar jadwal"""
+
+        id_user = get_jwt_identity()
+        role = get_jwt()["role"]
+        data = request.get_json()
+
+        if not data:
+            return {
+                "status": "error",
+                "message": "Request body tidak boleh kosong"
+            }, 400
+
+        id_jadwal_1 = data.get("id_jadwal_1")
+        id_jadwal_2 = data.get("id_jadwal_2")
+
+        if id_jadwal_1 is None or id_jadwal_2 is None:
+            return {
+                "status": "error",
+                "message": (
+                    "id_jadwal_1 dan id_jadwal_2 wajib diisi"
+                )
+            }, 400
+
+        if id_jadwal_1 == id_jadwal_2:
+            return {
+                "status": "error",
+                "message": (
+                    "id_jadwal_1 dan id_jadwal_2 "
+                    "tidak boleh sama"
+                )
+            }, 400
+
+        try:
+            result = switch_mentor_jadwal(
+                id_jadwal_1,
+                id_jadwal_2,
+                id_user,
+                role
+            )
+
+            if not result:
+                if role == "mentor":
+                    return {
+                        "status": "error",
+                        "message": (
+                            "Jadwal tidak ditemukan atau "
+                            "bukan jadwal mentor"
+                        )
+                    }, 404
+
+                return {
+                    "status": "error",
+                    "message": "Jadwal tidak ditemukan"
+                }, 404
+
+            return {
+                "status": "success",
+                "message": "Mentor berhasil ditukar",
+                "data": result
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(
+                f"[PATCH /jadwal/switch-mentor] Error: {e}"
+            )
+
+            return {
+                "status": "error",
+                "message": "Internal server error"
+            }, 500
 
 
 
