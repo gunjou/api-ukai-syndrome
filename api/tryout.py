@@ -169,35 +169,71 @@ class TryoutCreateResource(Resource):
             return {"message": "Terjadi kesalahan saat membuat tryout"}, 500
 
 
+# @tryout_ns.route('/assign-to-class')
+# class TryoutAssignToClassResource(Resource):
+#     @tryout_ns.expect(assign_class_parser)
+#     # @session_required
+#     @jwt_required()
+#     @role_required('admin')
+#     def post(self):
+#         """Akses: Admin | Assign tryout ke semua kelas dalam batch atau ke kelas tertentu"""
+#         args = assign_class_parser.parse_args()
+#         id_tryout = args['id_tryout']
+#         id_batch = args.get('id_batch')
+#         id_paketkelas_list = args.get('id_paketkelas')  # Bisa None
+
+#         # VALIDASI: Minimal satu dari batch atau list kelas harus diisi
+#         if not id_batch and not id_paketkelas_list:
+#             return {
+#                 "message": "Minimal salah satu dari id_batch atau id_paketkelas harus diisi."
+#             }, 400
+
+#         try:
+#             success = assign_tryout_to_classes(id_tryout, id_batch, id_paketkelas_list)
+#             if success:
+#                 return {"message": "Tryout berhasil di-assign ke kelas"}, 201
+#             return {"message": "Tidak ada kelas yang berhasil di-assign"}, 400
+#         except Exception as e:
+#             print(f"[ERROR POST /assign-to-class] {e}")
+#             return {"message": "Terjadi kesalahan saat assign tryout ke kelas"}, 500
+
+
 @tryout_ns.route('/assign-to-class')
 class TryoutAssignToClassResource(Resource):
     @tryout_ns.expect(assign_class_parser)
-    # @session_required
     @jwt_required()
     @role_required('admin')
     def post(self):
         """Akses: Admin | Assign tryout ke semua kelas dalam batch atau ke kelas tertentu"""
         args = assign_class_parser.parse_args()
+
         id_tryout = args['id_tryout']
         id_batch = args.get('id_batch')
-        id_paketkelas_list = args.get('id_paketkelas')  # Bisa None
+        id_paketkelas_list = args.get('id_paketkelas')
 
-        # VALIDASI: Minimal satu dari batch atau list kelas harus diisi
-        if not id_batch and not id_paketkelas_list:
-            return {
-                "message": "Minimal salah satu dari id_batch atau id_paketkelas harus diisi."
-            }, 400
+        # ==========================================
+        # VALIDASI
+        # ==========================================
+        if not id_batch:
+            return {"message": "id_batch harus diisi."}, 400
 
         try:
-            success = assign_tryout_to_classes(id_tryout, id_batch, id_paketkelas_list)
+            success = assign_tryout_to_classes(
+                id_tryout,
+                id_batch,
+                id_paketkelas_list
+            )
+
             if success:
-                return {"message": "Tryout berhasil di-assign ke kelas"}, 201
-            return {"message": "Tidak ada kelas yang berhasil di-assign"}, 400
+                return {"message": "Assignment tryout ke kelas berhasil diperbarui"}, 201
+
+            return {"message": "Assignment tryout gagal diperbarui"}, 400
+
         except Exception as e:
             print(f"[ERROR POST /assign-to-class] {e}")
             return {"message": "Terjadi kesalahan saat assign tryout ke kelas"}, 500
-        
-        
+
+
 @tryout_ns.route('/<int:id_tryout>/edit')
 class TryoutEditResource(Resource):
     @jwt_required()

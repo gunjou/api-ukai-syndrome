@@ -328,40 +328,125 @@ def insert_new_tryout(payload):
         print(f"[ERROR insert_new_tryout] {e}")
         return None
 
+# def assign_tryout_to_classes(id_tryout: int, id_batch: int = None, id_paketkelas_list: list = None):
+#     engine = get_connection()
+#     try:
+#         with engine.begin() as conn:
+#             kelas_list = []
+
+#             if id_batch:
+#                 result = conn.execute(text("""
+#                     SELECT id_paketkelas FROM paketkelas
+#                     WHERE id_batch = :id_batch AND status = 1
+#                 """), {"id_batch": id_batch}).mappings().fetchall()
+#                 kelas_list.extend([row["id_paketkelas"] for row in result])
+
+#             if id_paketkelas_list:
+#                 kelas_list.extend(id_paketkelas_list)
+
+#             # Hilangkan duplikat
+#             kelas_list = list(set(kelas_list))
+
+#             if not kelas_list:
+#                 return False
+
+#             for id_paketkelas in kelas_list:
+#                 conn.execute(text("""
+#                     INSERT INTO to_paketkelas (id_tryout, id_paketkelas, status, created_at, updated_at)
+#                     VALUES (:id_tryout, :id_paketkelas, 1, :now, :now)
+#                     ON CONFLICT (id_tryout, id_paketkelas) DO NOTHING
+#                 """), {
+#                     "id_tryout": id_tryout,
+#                     "id_paketkelas": id_paketkelas,
+#                     "now": get_wita()
+#                 })
+
+#         return True
+#     except SQLAlchemyError as e:
+#         print(f"[ERROR assign_tryout_to_classes] {e}")
+#         return False
+
 def assign_tryout_to_classes(id_tryout: int, id_batch: int = None, id_paketkelas_list: list = None):
+    
     engine = get_connection()
+
     try:
         with engine.begin() as conn:
-            kelas_list = []
+            now = get_wita()
 
-            if id_batch:
+            # ==================================================
+            # 1. Tentukan kelas yang akan AKTIF
+            # ==================================================
+
+            if id_paketkelas_list is not None:
+                # Payload id_paketkelas diberikan.
+                #
+                # Bisa:
+                # [235] -> hanya 235 yang aktif
+                # []    -> tidak ada yang aktif
+                kelas_list = list(set(id_paketkelas_list))
+
+            elif id_batch:
+                # id_paketkelas TIDAK diberikan.
+                # Artinya assign ke semua kelas aktif dalam batch.
                 result = conn.execute(text("""
-                    SELECT id_paketkelas FROM paketkelas
-                    WHERE id_batch = :id_batch AND status = 1
-                """), {"id_batch": id_batch}).mappings().fetchall()
-                kelas_list.extend([row["id_paketkelas"] for row in result])
+                    SELECT id_paketkelas
+                    FROM paketkelas
+                    WHERE id_batch = :id_batch
+                      AND status = 1
+                """), {
+                    "id_batch": id_batch
+                }).mappings().fetchall()
 
-            if id_paketkelas_list:
-                kelas_list.extend(id_paketkelas_list)
+                kelas_list = [
+                    row["id_paketkelas"]
+                    for row in result
+                ]
 
-            # Hilangkan duplikat
-            kelas_list = list(set(kelas_list))
+            else:
+                kelas_list = []
 
-            if not kelas_list:
-                return False
+            # ==================================================
+            # 2. NONAKTIFKAN SEMUA ASSIGNMENT LAMA
+            # ==================================================
+
+            conn.execute(text("""
+                UPDATE to_paketkelas
+                SET
+                    status = 0,
+                    updated_at = :now
+                WHERE id_tryout = :id_tryout
+                  AND status = 1
+            """), {
+                "id_tryout": id_tryout,
+                "now": now
+            })
+
+            # ==================================================
+            # 3. AKTIFKAN ASSIGNMENT BARU
+            # ==================================================
 
             for id_paketkelas in kelas_list:
+
                 conn.execute(text("""
-                    INSERT INTO to_paketkelas (id_tryout, id_paketkelas, status, created_at, updated_at)
-                    VALUES (:id_tryout, :id_paketkelas, 1, :now, :now)
-                    ON CONFLICT (id_tryout, id_paketkelas) DO NOTHING
+                    INSERT INTO to_paketkelas (
+                        id_tryout, id_paketkelas, status, created_at, updated_at
+                    )
+                    VALUES (
+                        :id_tryout, :id_paketkelas, 1, :now, :now
+                    )
+                    ON CONFLICT (id_tryout, id_paketkelas)
+                    DO UPDATE SET
+                        status = 1,
+                        updated_at = :now
                 """), {
                     "id_tryout": id_tryout,
                     "id_paketkelas": id_paketkelas,
-                    "now": get_wita()
+                    "now": now
                 })
 
-        return True
+            return True
+
     except SQLAlchemyError as e:
         print(f"[ERROR assign_tryout_to_classes] {e}")
         return False
