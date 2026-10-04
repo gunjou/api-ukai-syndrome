@@ -161,6 +161,7 @@ def get_kelas_by_mentor(id_user):
                 WHERE mk.id_user = :id_user 
                 AND mk.status = 1 
                 AND pk.status = 1
+                AND b.status = 1
                 ORDER BY pk.nama_kelas ASC
             """
             result = conn.execute(text(query), {"id_user": id_user}).mappings().fetchall()
