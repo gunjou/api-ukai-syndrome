@@ -205,16 +205,27 @@ class JadwalListResource(Resource):
 
                     if today.month == 12:
                         end_date = today.replace(
-                            year=today.year + 1, month=1, day=1
+                            year=today.year + 1,
+                            month=1,
+                            day=1
                         ) - timedelta(days=1)
                     else:
                         end_date = today.replace(
-                            month=today.month + 1, day=1
+                            month=today.month + 1,
+                            day=1
                         ) - timedelta(days=1)
 
                 try:
-                    start_date = datetime.strptime(str(start_date), "%Y-%m-%d").date()
-                    end_date = datetime.strptime(str(end_date), "%Y-%m-%d").date()
+                    start_date = datetime.strptime(
+                        str(start_date),
+                        "%Y-%m-%d"
+                    ).date()
+
+                    end_date = datetime.strptime(
+                        str(end_date),
+                        "%Y-%m-%d"
+                    ).date()
+
                 except ValueError:
                     return {
                         "status": "error",
@@ -249,6 +260,10 @@ class JadwalListResource(Resource):
                         "end_date": end_date.isoformat()
                     }
                 }, 200
+
+            # ==========================================
+            # MENTOR
+            # ==========================================
 
             result = get_all_jadwal_by_mentor(
                 id_mentor=id_user,

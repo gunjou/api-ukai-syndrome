@@ -467,30 +467,37 @@ def get_all_jadwal_by_mentor(
     id_mentor,
     search=None,
     start_date=None,
-    end_date=None,
-    page=1,
-    per_page=50
+    end_date=None
 ):
     engine = get_connection()
 
     try:
         with engine.connect() as conn:
+
             where_clause = """
                 WHERE j.id_mentor = :id_mentor
                   AND j.status = 1
             """
 
-            params = {"id_mentor": id_mentor}
+            params = {
+                "id_mentor": id_mentor
+            }
 
             if start_date is not None:
                 where_clause += """
-                    AND COALESCE(j.tanggal_reschedule, j.tanggal) >= :start_date
+                    AND COALESCE(
+                        j.tanggal_reschedule,
+                        j.tanggal
+                    ) >= :start_date
                 """
                 params["start_date"] = start_date
 
             if end_date is not None:
                 where_clause += """
-                    AND COALESCE(j.tanggal_reschedule, j.tanggal) <= :end_date
+                    AND COALESCE(
+                        j.tanggal_reschedule,
+                        j.tanggal
+                    ) <= :end_date
                 """
                 params["end_date"] = end_date
 
@@ -505,65 +512,78 @@ def get_all_jadwal_by_mentor(
                 """
                 params["search"] = f"%{search.strip()}%"
 
-            count_result = conn.execute(
-                text(f"""
-                    SELECT COUNT(*)
-                    FROM jadwal_kelas j
-                    LEFT JOIN paketkelas pk
-                        ON pk.id_paketkelas = j.id_paketkelas
-                       AND pk.status = 1
-                    LEFT JOIN users u
-                        ON u.id_user = j.id_mentor
-                       AND u.status = 1
-                    {where_clause}
-                """),
-                params
-            ).scalar()
-
-            total = count_result or 0
-            offset = (page - 1) * per_page
-
-            params["limit"] = per_page
-            params["offset"] = offset
-
             result = conn.execute(
                 text(f"""
                     SELECT
-                        j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_mentor, u.nama AS nama_mentor, 
-                        u.nickname AS nickname_mentor, j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
-                        j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
-                        COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
-                        COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai) AS waktu_mulai_efektif,
-                        COALESCE(j.waktu_selesai_reschedule, j.waktu_selesai) AS waktu_selesai_efektif,
-                        j.type_pertemuan, j.status, j.created_by, j.created_at, j.updated_by, j.updated_at
+                        j.id_jadwal,
+                        j.id_paketkelas,
+                        pk.nama_kelas,
+                        j.id_mentor,
+                        u.nama AS nama_mentor,
+                        u.nickname AS nickname_mentor,
+                        j.topik,
+                        j.catatan,
+                        j.tanggal,
+                        j.waktu_mulai,
+                        j.waktu_selesai,
+                        j.tanggal_reschedule,
+                        j.waktu_mulai_reschedule,
+                        j.waktu_selesai_reschedule,
+
+                        COALESCE(
+                            j.tanggal_reschedule,
+                            j.tanggal
+                        ) AS tanggal_efektif,
+
+                        COALESCE(
+                            j.waktu_mulai_reschedule,
+                            j.waktu_mulai
+                        ) AS waktu_mulai_efektif,
+
+                        COALESCE(
+                            j.waktu_selesai_reschedule,
+                            j.waktu_selesai
+                        ) AS waktu_selesai_efektif,
+
+                        j.type_pertemuan,
+                        j.status,
+                        j.created_by,
+                        j.created_at,
+                        j.updated_by,
+                        j.updated_at
+
                     FROM jadwal_kelas j
+
                     LEFT JOIN paketkelas pk
                         ON pk.id_paketkelas = j.id_paketkelas
                        AND pk.status = 1
+
                     LEFT JOIN users u
                         ON u.id_user = j.id_mentor
                        AND u.status = 1
+
                     {where_clause}
+
                     ORDER BY
-                        COALESCE(j.tanggal_reschedule, j.tanggal) ASC,
-                        COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai) ASC,
+                        COALESCE(
+                            j.tanggal_reschedule,
+                            j.tanggal
+                        ) ASC,
+
+                        COALESCE(
+                            j.waktu_mulai_reschedule,
+                            j.waktu_mulai
+                        ) ASC,
+
                         j.id_jadwal ASC
-                    LIMIT :limit
-                    OFFSET :offset
                 """),
                 params
             ).mappings().fetchall()
 
-            data = [serialize_value(row) for row in result]
-            total_pages = (total + per_page - 1) // per_page if total > 0 else 0
-
-            return {
-                "data": data,
-                "page": page,
-                "per_page": per_page,
-                "total": total,
-                "total_pages": total_pages
-            }
+            return [
+                serialize_value(row)
+                for row in result
+            ]
 
     except SQLAlchemyError as e:
         print(f"[get_all_jadwal_by_mentor] Error: {e}")
