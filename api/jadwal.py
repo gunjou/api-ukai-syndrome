@@ -285,12 +285,161 @@ class JadwalListResource(Resource):
                 "status": "error",
                 "message": "Internal server error"
             }, 500
+    
+    
+@jadwal_ns.route("/group")
+class JadwalGroupListResource(Resource):
+    @role_required(["admin", "mentor"])
+    @jadwal_ns.expect(jadwal_parser)
+    def get(self):
+        """Akses: admin/mentor, Mengambil daftar jadwal."""
+
+        id_user = get_jwt_identity()
+
+        try:
+            role = get_jwt()["role"]
+            args = jadwal_parser.parse_args()
+            search = args.get("search")
+
+            if role == "admin":
+                id_mentor = args.get("id_mentor")
+                id_paketkelas = args.get("id_paketkelas")
+                start_date = args.get("start_date")
+                end_date = args.get("end_date")
+                page = args.get("page") or 1
+                per_page = args.get("per_page") or 50
+
+                if page < 1:
+                    return {
+                        "status": "error",
+                        "message": "Parameter page harus lebih besar dari 0"
+                    }, 400
+
+                if not 1 <= per_page <= 100:
+                    return {
+                        "status": "error",
+                        "message": "Parameter per_page harus berada antara 1 dan 100"
+                    }, 400
+
+                if not start_date or not end_date:
+                    today = datetime.now().date()
+                    start_date = today.replace(day=1)
+
+                    if today.month == 12:
+                        end_date = today.replace(
+                            year=today.year + 1,
+                            month=1,
+                            day=1
+                        ) - timedelta(days=1)
+                    else:
+                        end_date = today.replace(
+                            month=today.month + 1,
+                            day=1
+                        ) - timedelta(days=1)
+
+                try:
+                    start_date = datetime.strptime(
+                        str(start_date),
+                        "%Y-%m-%d"
+                    ).date()
+
+                    end_date = datetime.strptime(
+                        str(end_date),
+                        "%Y-%m-%d"
+                    ).date()
+
+                except ValueError:
+                    return {
+                        "status": "error",
+                        "message": "Format tanggal harus YYYY-MM-DD"
+                    }, 400
+
+                if start_date > end_date:
+                    return {
+                        "status": "error",
+                        "message": "start_date tidak boleh lebih besar dari end_date"
+                    }, 400
+
+                result = get_all_jadwal(
+                    id_mentor=id_mentor,
+                    id_paketkelas=id_paketkelas,
+                    search=search,
+                    start_date=start_date,
+                    end_date=end_date,
+                    page=page,
+                    per_page=per_page
+                )
+
+                return {
+                    "status": "success",
+                    "data": result["data"],
+                    "meta": {
+                        "page": result["page"],
+                        "per_page": result["per_page"],
+                        "total": result["total"],
+                        "total_pages": result["total_pages"],
+                        "start_date": start_date.isoformat(),
+                        "end_date": end_date.isoformat()
+                    }
+                }, 200
+
+            # ==========================================
+            # MENTOR
+            # ==========================================
+
+            result = get_group_all_jadwal_by_mentor(
+                id_mentor=id_user,
+                search=search
+            )
+
+            return {
+                "status": "success",
+                "data": result,
+                "meta": {
+                    "total": len(result)
+                }
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /jadwal] Error: {e}")
+
+            return {
+                "status": "error",
+                "message": "Internal server error"
+            }, 500
 
 
 
 # ============================================================================ #
 #            #ANCHOR MANAJEMEN JADWAL BY DETAIL (ADD, UPDATE, DELETE)          #
 # ============================================================================ #
+@jadwal_ns.route("/<int:id_jadwal>/group")
+class JadwalGroupResource(Resource):
+
+    @role_required(["admin", "mentor"])
+    def get(self, id_jadwal):
+        """Akses: admin/mentor, Mengambil detail jadwal"""
+
+        id_user = get_jwt_identity()
+
+        try:
+            role = get_jwt()["role"]
+            result = (
+                get_jadwal_by_id(id_jadwal)
+                if role == "admin"
+                else get_group_jadwal_by_id_mentor(id_jadwal, id_user)
+            )
+
+            if not result:
+                return {"status": "error", "message": "Jadwal tidak ditemukan"}, 404
+
+            return {"status": "success", "data": result}, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /jadwal/{id_jadwal}] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
 @jadwal_ns.route("/<int:id_jadwal>")
 class JadwalResource(Resource):
 

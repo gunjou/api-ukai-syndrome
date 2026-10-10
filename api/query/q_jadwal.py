@@ -662,3 +662,378 @@ def reschedule_jadwal_by_mentor(payload):
     except SQLAlchemyError as e:
         print(f"[reschedule_jadwal_by_mentor] Error: {e}")
         return None
+
+
+# =================================== GROUP ================================== #
+def get_group_all_jadwal_by_mentor(
+    id_mentor,
+    search=None,
+    start_date=None,
+    end_date=None
+):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+
+            where_clause = """
+                WHERE j.id_mentor = :id_mentor
+                  AND j.status = 1
+            """
+
+            params = {
+                "id_mentor": id_mentor
+            }
+
+            if start_date is not None:
+                where_clause += """
+                    AND COALESCE(
+                        j.tanggal_reschedule,
+                        j.tanggal
+                    ) >= :start_date
+                """
+                params["start_date"] = start_date
+
+            if end_date is not None:
+                where_clause += """
+                    AND COALESCE(
+                        j.tanggal_reschedule,
+                        j.tanggal
+                    ) <= :end_date
+                """
+                params["end_date"] = end_date
+
+            if search and search.strip():
+                where_clause += """
+                    AND (
+                        u.nama ILIKE :search
+                        OR pk.nama_kelas ILIKE :search
+                        OR j.topik ILIKE :search
+                        OR j.catatan ILIKE :search
+                    )
+                """
+                params["search"] = f"%{search.strip()}%"
+
+            result = conn.execute(
+                text(f"""
+                    SELECT
+                        j.id_jadwal,
+                        j.id_paketkelas,
+                        pk.nama_kelas,
+
+                        j.id_mentor,
+                        u.nama AS nama_mentor,
+                        u.nickname AS nickname_mentor,
+
+                        j.topik,
+                        j.catatan,
+
+                        j.tanggal,
+                        j.waktu_mulai,
+                        j.waktu_selesai,
+
+                        j.tanggal_reschedule,
+                        j.waktu_mulai_reschedule,
+                        j.waktu_selesai_reschedule,
+
+                        COALESCE(
+                            j.tanggal_reschedule,
+                            j.tanggal
+                        ) AS tanggal_efektif,
+
+                        COALESCE(
+                            j.waktu_mulai_reschedule,
+                            j.waktu_mulai
+                        ) AS waktu_mulai_efektif,
+
+                        COALESCE(
+                            j.waktu_selesai_reschedule,
+                            j.waktu_selesai
+                        ) AS waktu_selesai_efektif,
+
+                        j.type_pertemuan,
+                        j.status,
+                        j.created_by,
+                        j.created_at,
+                        j.updated_by,
+                        j.updated_at
+
+                    FROM jadwal_kelas j
+
+                    LEFT JOIN paketkelas pk
+                        ON pk.id_paketkelas = j.id_paketkelas
+                       AND pk.status = 1
+
+                    LEFT JOIN users u
+                        ON u.id_user = j.id_mentor
+                       AND u.status = 1
+
+                    {where_clause}
+
+                    ORDER BY
+                        COALESCE(
+                            j.tanggal_reschedule,
+                            j.tanggal
+                        ) ASC,
+
+                        COALESCE(
+                            j.waktu_mulai_reschedule,
+                            j.waktu_mulai
+                        ) ASC,
+
+                        j.id_jadwal ASC
+                """),
+                params
+            ).mappings().fetchall()
+
+            # ==========================================
+            # GROUP BY TANGGAL + JAM
+            # ==========================================
+
+            grouped = {}
+
+            for row in result:
+                item = serialize_value(row)
+
+                group_key = (
+                    item["tanggal_efektif"],
+                    item["waktu_mulai_efektif"],
+                    item["waktu_selesai_efektif"]
+                )
+
+                if group_key not in grouped:
+                    grouped[group_key] = {
+                        "tanggal": item["tanggal_efektif"],
+                        "waktu_mulai": item["waktu_mulai_efektif"],
+                        "waktu_selesai": item["waktu_selesai_efektif"],
+                        "id_jadwal": item["id_jadwal"],
+                        "count": 0,
+                        "classes": []
+                    }
+
+                group = grouped[group_key]
+
+                # ==========================================
+                # Gunakan ID jadwal terkecil sebagai
+                # representative ID group
+                # ==========================================
+
+                if item["id_jadwal"] < group["id_jadwal"]:
+                    group["id_jadwal"] = item["id_jadwal"]
+
+                # ==========================================
+                # Tambahkan kelas
+                # ==========================================
+
+                group["classes"].append({
+                    "id_jadwal": item["id_jadwal"],
+                    "id_paketkelas": item["id_paketkelas"],
+                    "nama_kelas": item["nama_kelas"],
+                    "topik": item["topik"],
+                    "catatan": item["catatan"],
+                    "type_pertemuan": item["type_pertemuan"],
+                    "tanggal": item["tanggal"],
+                    "waktu_mulai": item["waktu_mulai"],
+                    "waktu_selesai": item["waktu_selesai"],
+                    "tanggal_reschedule": item["tanggal_reschedule"],
+                    "waktu_mulai_reschedule": item["waktu_mulai_reschedule"],
+                    "waktu_selesai_reschedule": item["waktu_selesai_reschedule"],
+                    "status": item["status"]
+                })
+
+                group["count"] += 1
+
+            return list(grouped.values())
+
+    except SQLAlchemyError as e:
+        print(f"[get_all_jadwal_by_mentor] Error: {e}")
+        raise
+
+
+def get_group_jadwal_by_id_mentor(id_jadwal, id_mentor):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+
+            # ==========================================
+            # 1. Ambil jadwal referensi berdasarkan ID
+            # ==========================================
+
+            reference = conn.execute(text("""
+                SELECT
+                    COALESCE(
+                        tanggal_reschedule,
+                        tanggal
+                    ) AS tanggal_efektif,
+
+                    COALESCE(
+                        waktu_mulai_reschedule,
+                        waktu_mulai
+                    ) AS waktu_mulai_efektif,
+
+                    COALESCE(
+                        waktu_selesai_reschedule,
+                        waktu_selesai
+                    ) AS waktu_selesai_efektif
+
+                FROM jadwal_kelas
+
+                WHERE id_jadwal = :id_jadwal
+                  AND id_mentor = :id_mentor
+                  AND status = 1
+            """), {
+                "id_jadwal": id_jadwal,
+                "id_mentor": id_mentor
+            }).mappings().fetchone()
+
+            if not reference:
+                return None
+
+            # ==========================================
+            # 2. Ambil semua jadwal yang identik
+            #    tanggal + jam mulai + jam selesai
+            # ==========================================
+
+            result = conn.execute(text("""
+                SELECT
+                    j.id_jadwal,
+                    j.id_paketkelas,
+                    pk.nama_kelas,
+
+                    j.id_mentor,
+                    u.nama AS nama_mentor,
+                    u.nickname AS nickname_mentor,
+
+                    j.topik,
+                    j.catatan,
+
+                    j.tanggal,
+                    j.waktu_mulai,
+                    j.waktu_selesai,
+
+                    j.tanggal_reschedule,
+                    j.waktu_mulai_reschedule,
+                    j.waktu_selesai_reschedule,
+
+                    COALESCE(
+                        j.tanggal_reschedule,
+                        j.tanggal
+                    ) AS tanggal_efektif,
+
+                    COALESCE(
+                        j.waktu_mulai_reschedule,
+                        j.waktu_mulai
+                    ) AS waktu_mulai_efektif,
+
+                    COALESCE(
+                        j.waktu_selesai_reschedule,
+                        j.waktu_selesai
+                    ) AS waktu_selesai_efektif,
+
+                    j.type_pertemuan,
+                    j.status,
+                    j.created_by,
+                    j.created_at,
+                    j.updated_by,
+                    j.updated_at
+
+                FROM jadwal_kelas j
+
+                LEFT JOIN paketkelas pk
+                    ON pk.id_paketkelas = j.id_paketkelas
+                   AND pk.status = 1
+
+                LEFT JOIN users u
+                    ON u.id_user = j.id_mentor
+                   AND u.status = 1
+
+                WHERE j.id_mentor = :id_mentor
+                  AND j.status = 1
+
+                  AND COALESCE(
+                      j.tanggal_reschedule,
+                      j.tanggal
+                  ) = :tanggal_efektif
+
+                  AND COALESCE(
+                      j.waktu_mulai_reschedule,
+                      j.waktu_mulai
+                  ) = :waktu_mulai_efektif
+
+                  AND COALESCE(
+                      j.waktu_selesai_reschedule,
+                      j.waktu_selesai
+                  ) = :waktu_selesai_efektif
+
+                ORDER BY
+                    pk.nama_kelas ASC,
+                    j.id_jadwal ASC
+            """), {
+                "id_mentor": id_mentor,
+                "tanggal_efektif": reference["tanggal_efektif"],
+                "waktu_mulai_efektif": reference["waktu_mulai_efektif"],
+                "waktu_selesai_efektif": reference["waktu_selesai_efektif"]
+            }).mappings().fetchall()
+
+            if not result:
+                return None
+
+            rows = [
+                serialize_value(row)
+                for row in result
+            ]
+
+            # ==========================================
+            # 3. Return grouped data
+            # ==========================================
+
+            return {
+                "tanggal": rows[0]["tanggal_efektif"],
+                "waktu_mulai": rows[0]["waktu_mulai_efektif"],
+                "waktu_selesai": rows[0]["waktu_selesai_efektif"],
+                "count": len(rows),
+
+                "classes": [
+                    {
+                        "id_jadwal": row["id_jadwal"],
+                        "id_paketkelas": row["id_paketkelas"],
+                        "nama_kelas": row["nama_kelas"],
+
+                        "topik": row["topik"],
+                        "catatan": row["catatan"],
+
+                        "tanggal": row["tanggal"],
+                        "waktu_mulai": row["waktu_mulai"],
+                        "waktu_selesai": row["waktu_selesai"],
+
+                        "tanggal_reschedule": (
+                            row["tanggal_reschedule"]
+                        ),
+                        "waktu_mulai_reschedule": (
+                            row["waktu_mulai_reschedule"]
+                        ),
+                        "waktu_selesai_reschedule": (
+                            row["waktu_selesai_reschedule"]
+                        ),
+
+                        "tanggal_efektif": (
+                            row["tanggal_efektif"]
+                        ),
+                        "waktu_mulai_efektif": (
+                            row["waktu_mulai_efektif"]
+                        ),
+                        "waktu_selesai_efektif": (
+                            row["waktu_selesai_efektif"]
+                        ),
+
+                        "type_pertemuan": row["type_pertemuan"],
+                        "status": row["status"]
+                    }
+                    for row in rows
+                ]
+            }
+
+    except SQLAlchemyError as e:
+        print(f"[get_jadwal_by_id_mentor] Error: {e}")
+        raise
