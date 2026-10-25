@@ -126,6 +126,169 @@ def insert_bulk_soaltryout(id_tryout, soal_list, existing_count):
         return False
 
 
+def insert_bulk_soaltryout_from_json(id_tryout, soal_list):
+    engine = get_connection()
+    now = get_wita()
+    try:
+        with engine.begin() as conn:
+
+            # ==========================
+            # Cek Tryout
+            # ==========================
+
+            q = text("""
+                SELECT jumlah_soal
+                FROM tryout
+                WHERE id_tryout = :id_tryout
+                AND status = 1
+            """)
+
+            row = conn.execute(
+                q,
+                {
+                    "id_tryout": id_tryout
+                }
+            ).mappings().fetchone()
+
+            if not row:
+
+                return {
+                    "success": False,
+                    "message": "Tryout tidak ditemukan."
+                }
+
+            jumlah_soal = row["jumlah_soal"]
+
+            # ==========================
+            # Duplicate nomor pada request
+            # ==========================
+
+            nomor_request = [
+                s["nomor_urut"]
+                for s in soal_list
+            ]
+
+            if len(nomor_request) != len(set(nomor_request)):
+
+                return {
+                    "success": False,
+                    "message": "Terdapat nomor urut yang duplikat pada JSON."
+                }
+
+            # ==========================
+            # Ambil nomor existing
+            # ==========================
+
+            q = text("""
+                SELECT nomor_urut
+                FROM soaltryout
+                WHERE id_tryout = :id_tryout
+                AND status = 1
+            """)
+
+            existing = conn.execute(
+                q,
+                {
+                    "id_tryout": id_tryout
+                }
+            ).scalars().all()
+
+            bentrok = set(existing).intersection(
+                nomor_request
+            )
+
+            if bentrok:
+
+                return {
+                    "success": False,
+                    "message": f"Nomor urut sudah ada: {sorted(list(bentrok))}"
+                }
+
+            # ==========================
+            # Cek melebihi jumlah soal
+            # ==========================
+
+            total = len(existing) + len(soal_list)
+            if total > jumlah_soal:
+                return {
+                    "success": False,
+                    "message": "Jumlah soal melebihi kuota tryout."
+                }
+
+            # ==========================
+            # Insert
+            # ==========================
+
+            values = []
+
+            for soal in soal_list:
+                values.append({
+                    "id_tryout": id_tryout,
+                    "nomor_urut": soal["nomor_urut"],
+                    "pertanyaan": soal["pertanyaan"],
+                    "pilihan_a": soal["pilihan_a"],
+                    "pilihan_b": soal["pilihan_b"],
+                    "pilihan_c": soal["pilihan_c"],
+                    "pilihan_d": soal["pilihan_d"],
+                    "pilihan_e": soal["pilihan_e"],
+                    "jawaban_benar": soal["jawaban_benar"],
+                    "pembahasan": soal.get(
+                        "pembahasan",
+                        ""
+                    ),
+                    "now": now
+                })
+
+            q = text("""
+                INSERT INTO soaltryout (
+                    id_tryout,
+                    nomor_urut,
+                    pertanyaan,
+                    pilihan_a,
+                    pilihan_b,
+                    pilihan_c,
+                    pilihan_d,
+                    pilihan_e,
+                    jawaban_benar,
+                    pembahasan,
+                    status,
+                    created_at,
+                    updated_at
+                )
+
+                VALUES (
+                    :id_tryout,
+                    :nomor_urut,
+                    :pertanyaan,
+                    :pilihan_a,
+                    :pilihan_b,
+                    :pilihan_c,
+                    :pilihan_d,
+                    :pilihan_e,
+                    :jawaban_benar,
+                    :pembahasan,
+                    1,
+                    :now,
+                    :now
+                )
+            """)
+            conn.execute(
+                q,
+                values
+            )
+
+            return {
+                "success": True,
+                "message": f"{len(values)} soal berhasil ditambahkan."
+            }
+    except SQLAlchemyError as e:
+        print(e)
+        return {
+            "success": False,
+            "message": "Terjadi kesalahan database."
+        }
+
+
 def get_soal_by_tryout(id_tryout):
     engine = get_connection()
 

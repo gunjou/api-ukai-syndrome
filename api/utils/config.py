@@ -12,6 +12,9 @@ load_dotenv()
 CDN_UPLOAD_URL = os.getenv("CDN_UPLOAD_URL")
 CDN_API_KEY = os.getenv("CDN_API_KEY")
 
+# === Konfigurasi AI === #
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
 
 # === Konfigurasi Database === #
 host = os.getenv("DB_HOST", "localhost")

@@ -1,3 +1,5 @@
+import os
+
 import requests
 from flask import request
 from werkzeug.datastructures import FileStorage
@@ -13,6 +15,13 @@ from .utils.config import CDN_API_KEY, CDN_UPLOAD_URL
 
 
 absensi_ns = Namespace("absensi", description="Manajemen Absensi")
+
+
+# Radius check-in peserta dihitung dari titik check-in mentor (meter)
+ABSENSI_RADIUS_METER = float(os.getenv("ABSENSI_RADIUS_METER", 100))
+
+# Batas akurasi GPS peserta yang masih diterima (meter)
+ABSENSI_MAX_GPS_ACCURACY = float(os.getenv("ABSENSI_MAX_GPS_ACCURACY", 100))
 
 
 # ============================================================================ #
@@ -77,6 +86,12 @@ mentor_checkout_parser.add_argument("evidence", type=FileStorage, location="file
 
 kelas_peserta_parser = absensi_ns.parser()
 kelas_peserta_parser.add_argument("id_paketkelas", type=int, required=True, location="args", help="ID paket kelas")
+
+peserta_checkin_parser = absensi_ns.parser()
+peserta_checkin_parser.add_argument("id_jadwal", type=int, required=True, location="form", help="ID jadwal yang akan dilakukan check-in")
+peserta_checkin_parser.add_argument("latitude", type=float, required=False, location="form", help="Latitude lokasi peserta")
+peserta_checkin_parser.add_argument("longitude", type=float, required=False, location="form", help="Longitude lokasi peserta")
+peserta_checkin_parser.add_argument("accuracy", type=float, required=False, location="form", help="Akurasi GPS dalam meter")
 
 
 
@@ -609,15 +624,23 @@ class AbsensiPesertaListResource(Resource):
                     "message": "Jadwal tidak ditemukan atau bukan jadwal mentor"
                 }, 404
 
-            peserta = get_peserta_for_manual_attendance(
-                data["id_peserta"],
-                jadwal["id_paketkelas"]
-            )
+            if jadwal.get("id_kelompok") is not None:
+                peserta = get_peserta_roster_jadwal(
+                    data["id_jadwal"],
+                    data["id_peserta"]
+                )
+                not_found_message = "Peserta tidak terdaftar pada kelompok tersebut"
+            else:
+                peserta = get_peserta_for_manual_attendance(
+                    data["id_peserta"],
+                    jadwal["id_paketkelas"]
+                )
+                not_found_message = "Peserta tidak terdaftar pada kelas tersebut"
 
             if not peserta:
                 return {
                     "status": "error",
-                    "message": "Peserta tidak terdaftar pada kelas tersebut"
+                    "message": not_found_message
                 }, 404
 
             existing = get_absensi_peserta_by_jadwal_peserta(
@@ -651,6 +674,144 @@ class AbsensiPesertaListResource(Resource):
 
         except SQLAlchemyError as e:
             print(f"[POST /absensi/peserta] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+@absensi_ns.route("/peserta/check-in")
+class AbsensiPesertaCheckInResource(Resource):
+
+    @role_required("peserta")
+    @absensi_ns.expect(peserta_checkin_parser)
+    def post(self):
+        """
+        Akses: peserta
+
+        Check-in mandiri peserta untuk pertemuan OFFLINE.
+
+        Validasi:
+        - peserta termasuk roster jadwal (kelas / kelompok)
+        - hari ini adalah tanggal jadwal (memperhitungkan reschedule)
+        - mentor sudah check-in dan belum check-out
+        - akurasi GPS peserta dalam batas
+        - jarak peserta ke titik check-in mentor <= radius
+        """
+
+        id_peserta = get_jwt_identity()
+        data = peserta_checkin_parser.parse_args()
+        id_jadwal = data.get("id_jadwal")
+        latitude = data.get("latitude")
+        longitude = data.get("longitude")
+        accuracy = data.get("accuracy")
+
+        if not id_jadwal:
+            return {"status": "error", "message": "id_jadwal wajib diisi"}, 400
+
+        if latitude is None or longitude is None:
+            return {"status": "error", "message": "Latitude dan longitude wajib diisi"}, 400
+
+        if accuracy is None:
+            return {"status": "error", "message": "Accuracy GPS wajib diisi"}, 400
+
+        if not (-90 <= latitude <= 90) or not (-180 <= longitude <= 180):
+            return {"status": "error", "message": "Koordinat lokasi tidak valid"}, 400
+
+        try:
+            jadwal = get_jadwal_for_peserta_checkin(id_jadwal, id_peserta)
+
+            if not jadwal:
+                return {
+                    "status": "error",
+                    "message": "Jadwal tidak ditemukan atau Anda tidak terdaftar pada jadwal tersebut"
+                }, 404
+
+            if jadwal["type_pertemuan"] != "OFFLINE":
+                return {
+                    "status": "error",
+                    "message": "Check-in mandiri hanya untuk pertemuan offline"
+                }, 400
+
+            if not jadwal["is_hari_ini"]:
+                return {
+                    "status": "error",
+                    "message": "Check-in hanya dapat dilakukan pada tanggal jadwal"
+                }, 400
+
+            if jadwal["id_absensi_peserta"]:
+                return {
+                    "status": "error",
+                    "message": "Anda sudah memiliki data absensi pada jadwal tersebut"
+                }, 409
+
+            if not jadwal["mentor_check_in_at"]:
+                return {
+                    "status": "error",
+                    "message": "Mentor belum melakukan check-in"
+                }, 400
+
+            if jadwal["mentor_check_out_at"]:
+                return {
+                    "status": "error",
+                    "message": "Sesi sudah ditutup karena mentor sudah check-out"
+                }, 400
+
+            if jadwal["mentor_latitude"] is None or jadwal["mentor_longitude"] is None:
+                return {
+                    "status": "error",
+                    "message": "Lokasi check-in mentor tidak tersedia"
+                }, 400
+
+            if accuracy > ABSENSI_MAX_GPS_ACCURACY:
+                return {
+                    "status": "error",
+                    "message": (
+                        "Akurasi GPS terlalu rendah, pindah ke area terbuka "
+                        "lalu coba lagi"
+                    ),
+                    "data": {
+                        "accuracy": accuracy,
+                        "max_accuracy": ABSENSI_MAX_GPS_ACCURACY
+                    }
+                }, 400
+
+            distance = calculate_distance_meter(
+                float(jadwal["mentor_latitude"]),
+                float(jadwal["mentor_longitude"]),
+                latitude,
+                longitude
+            )
+
+            if distance > ABSENSI_RADIUS_METER:
+                return {
+                    "status": "error",
+                    "message": "Lokasi Anda berada di luar radius lokasi mentor",
+                    "data": {
+                        "distance": round(distance, 2),
+                        "radius": ABSENSI_RADIUS_METER
+                    }
+                }, 400
+
+            result = insert_absensi_peserta_checkin({
+                "id_jadwal": id_jadwal,
+                "id_peserta": id_peserta,
+                "latitude": latitude,
+                "longitude": longitude,
+                "accuracy": accuracy
+            })
+
+            if not result:
+                return {"status": "error", "message": "Gagal melakukan check-in"}, 400
+
+            return {
+                "status": "success",
+                "message": "Check-in berhasil",
+                "data": {
+                    **result,
+                    "distance": round(distance, 2)
+                }
+            }, 201
+
+        except SQLAlchemyError as e:
+            print(f"[POST /absensi/peserta/check-in] Error: {e}")
             return {"status": "error", "message": "Internal server error"}, 500
 
 

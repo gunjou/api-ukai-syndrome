@@ -3,6 +3,8 @@
 
 ### Custom Ignore ###
 deploy.sh
+TableDB.md
+API_ENDPOINTS.md
 *.csv
 
 ### Flask ###

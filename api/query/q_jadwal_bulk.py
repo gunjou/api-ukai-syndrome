@@ -191,6 +191,12 @@ BULK_JADWAL_REQUIRED_COLUMNS = [
     "type_pertemuan",
 ]
 
+# Kolom opsional: file lama tanpa kolom ini tetap valid
+# nama_kelompok diisi untuk jadwal OFFLINE lintas kelas (kosongkan nama_kelas)
+BULK_JADWAL_OPTIONAL_COLUMNS = [
+    "nama_kelompok",
+]
+
 
 def validate_bulk_headers(df):
     actual_columns = set(df.columns)
@@ -224,6 +230,37 @@ def get_bulk_paketkelas_mapping():
         if key:
             mapping.setdefault(key, []).append(
                 row["id_paketkelas"]
+            )
+
+    return mapping
+
+
+def get_bulk_kelompok_mapping():
+    """
+    Mapping nama kelompok -> list id_kelompok.
+    Nama kelompok hanya unik per batch, sehingga satu nama
+    bisa mengarah ke lebih dari satu kelompok (ditangani sebagai error).
+    """
+
+    engine = get_connection()
+
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT
+                id_kelompok,
+                nama_kelompok
+            FROM kelompok_belajar
+            WHERE status = 1
+        """)).mappings().fetchall()
+
+    mapping = {}
+
+    for row in result:
+        key = normalize_text(row["nama_kelompok"])
+
+        if key:
+            mapping.setdefault(key, []).append(
+                row["id_kelompok"]
             )
 
     return mapping
@@ -288,6 +325,7 @@ def get_existing_jadwal_for_bulk():
             SELECT
                 id_jadwal,
                 id_paketkelas,
+                id_kelompok,
                 id_mentor,
                 tanggal,
                 waktu_mulai,
@@ -321,7 +359,8 @@ def get_bulk_jadwal_template():
         "waktu_selesai",
         "topik",
         "catatan",
-        "type_pertemuan"
+        "type_pertemuan",
+        "nama_kelompok"
     ]
 
     example_data = [
@@ -343,7 +382,19 @@ def get_bulk_jadwal_template():
             "waktu_selesai": "11:00",
             "topik": "Bahan Alam",
             "catatan": "Pertemuan kedua",
-            "type_pertemuan": "OFFLINE"
+            "type_pertemuan": "OFFLINE",
+            "nama_kelompok": ""
+        },
+        {
+            "nama_kelas": "",
+            "mentor": "Kak Suato",
+            "tanggal": "2026-09-03",
+            "waktu_mulai": "13:00",
+            "waktu_selesai": "15:00",
+            "topik": "Farmakologi",
+            "catatan": "Offline lintas kelas (isi nama_kelompok, kosongkan nama_kelas)",
+            "type_pertemuan": "OFFLINE",
+            "nama_kelompok": "Kelompok Mataram 1"
         }
     ]
 
@@ -395,7 +446,8 @@ def get_bulk_jadwal_template():
                 "E": 15,
                 "F": 30,
                 "G": 40,
-                "H": 20
+                "H": 20,
+                "I": 30
             }
 
             for column, width in widths.items():
@@ -496,6 +548,14 @@ def validate_bulk_jadwal(file, filename, id_user):
 
         paketkelas_mapping = get_bulk_paketkelas_mapping()
         mentor_mapping = get_bulk_mentor_mapping()
+
+        # Kolom nama_kelompok opsional (file lama tetap diproses seperti biasa)
+        has_kelompok_column = "nama_kelompok" in df.columns
+        kelompok_mapping = (
+            get_bulk_kelompok_mapping()
+            if has_kelompok_column
+            else {}
+        )
         mentor_kelas_mapping = get_bulk_mentor_kelas_mapping()
 
         existing_jadwal = get_existing_jadwal_for_bulk()
@@ -537,12 +597,18 @@ def validate_bulk_jadwal(file, filename, id_user):
             topik_raw = row.get("topik")
             catatan_raw = row.get("catatan")
             type_pertemuan_raw = row.get("type_pertemuan")
+            nama_kelompok_raw = (
+                row.get("nama_kelompok")
+                if has_kelompok_column
+                else None
+            )
 
             # ------------------------------------------------------------ #
             # NORMALIZE
             # ------------------------------------------------------------ #
 
             nama_kelas_key = normalize_text(nama_kelas_raw)
+            nama_kelompok_key = normalize_text(nama_kelompok_raw)
             mentor_key = normalize_text(mentor_raw)
             type_pertemuan = normalize_type_pertemuan(
                 type_pertemuan_raw
@@ -553,12 +619,57 @@ def validate_bulk_jadwal(file, filename, id_user):
             # ------------------------------------------------------------ #
 
             id_paketkelas = None
+            id_kelompok = None
 
-            if not nama_kelas_key:
+            if nama_kelas_key and nama_kelompok_key:
+                row_errors.append({
+                    "field": "nama_kelompok",
+                    "value": nama_kelompok_raw,
+                    "message": (
+                        "Isi salah satu saja: "
+                        "nama_kelas atau nama_kelompok"
+                    )
+                })
+
+            elif not nama_kelas_key and not nama_kelompok_key:
                 row_errors.append({
                     "field": "nama_kelas",
-                    "message": "Nama kelas wajib diisi"
+                    "message": (
+                        "Isi salah satu: nama_kelas atau nama_kelompok"
+                        if has_kelompok_column
+                        else "Nama kelas wajib diisi"
+                    )
                 })
+
+            # ------------------------------------------------------------ #
+            # RESOLVE KELOMPOK
+            # ------------------------------------------------------------ #
+
+            elif nama_kelompok_key:
+                kelompok_ids = kelompok_mapping.get(
+                    nama_kelompok_key,
+                    []
+                )
+
+                if not kelompok_ids:
+                    row_errors.append({
+                        "field": "nama_kelompok",
+                        "value": nama_kelompok_raw,
+                        "message": "Kelompok tidak ditemukan"
+                    })
+
+                elif len(kelompok_ids) > 1:
+                    row_errors.append({
+                        "field": "nama_kelompok",
+                        "value": nama_kelompok_raw,
+                        "message": (
+                            "Nama kelompok tidak unik di database "
+                            "(terdaftar di lebih dari satu batch)"
+                        )
+                    })
+
+                else:
+                    id_kelompok = kelompok_ids[0]
 
             else:
                 paketkelas_ids = paketkelas_mapping.get(
@@ -717,12 +828,31 @@ def validate_bulk_jadwal(file, filename, id_user):
                     )
                 })
 
+            # Kelompok hanya untuk pertemuan OFFLINE
+            if type_pertemuan == "ONLINE" and nama_kelompok_key:
+                row_errors.append({
+                    "field": "nama_kelompok",
+                    "value": nama_kelompok_raw,
+                    "message": (
+                        "Pertemuan ONLINE wajib menggunakan "
+                        "nama_kelas, bukan nama_kelompok"
+                    )
+                })
+
             # ------------------------------------------------------------ #
             # DUPLICATE / CONFLICT
             # ------------------------------------------------------------ #
 
+            # Target jadwal: kelas atau kelompok
+            if id_paketkelas is not None:
+                target = ("KELAS", id_paketkelas)
+            elif id_kelompok is not None:
+                target = ("KELOMPOK", id_kelompok)
+            else:
+                target = None
+
             if (
-                id_paketkelas is not None
+                target is not None
                 and id_mentor is not None
                 and tanggal is not None
                 and waktu_mulai is not None
@@ -731,7 +861,7 @@ def validate_bulk_jadwal(file, filename, id_user):
             ):
 
                 schedule_key = (
-                    id_paketkelas,
+                    target,
                     id_mentor,
                     tanggal,
                     waktu_mulai,
@@ -768,9 +898,15 @@ def validate_bulk_jadwal(file, filename, id_user):
 
                 for existing in existing_jadwal:
 
+                    existing_target = (
+                        ("KELAS", existing["id_paketkelas"])
+                        if existing["id_paketkelas"] is not None
+                        else ("KELOMPOK", existing["id_kelompok"])
+                    )
+
                     if (
-                        existing["id_paketkelas"]
-                        == id_paketkelas
+                        existing_target
+                        == target
                         and existing["id_mentor"]
                         == id_mentor
                         and existing["tanggal"]
@@ -879,15 +1015,19 @@ def validate_bulk_jadwal(file, filename, id_user):
                     else str(type_pertemuan_raw)
                 ),
 
+                "kelompok_raw": (
+                    None
+                    if pd.isna(nama_kelompok_raw)
+                    else str(nama_kelompok_raw)
+                ),
+                
                 "id_paketkelas": id_paketkelas,
+                "id_kelompok": id_kelompok,
                 "id_mentor": id_mentor,
-
                 "tanggal": tanggal,
                 "waktu_mulai": waktu_mulai,
                 "waktu_selesai": waktu_selesai,
-
                 "type_pertemuan": type_pertemuan,
-
                 "status": status,
                 "error_message": row_errors
             })
@@ -907,29 +1047,12 @@ def validate_bulk_jadwal(file, filename, id_user):
         # ================================================================ #
 
         with engine.begin() as conn:
-
             conn.execute(text("""
                 INSERT INTO jadwal_import (
-                    id_import,
-                    file_name,
-                    status,
-                    total_rows,
-                    valid_rows,
-                    invalid_rows,
-                    created_by,
-                    created_at,
-                    updated_at
+                    id_import, file_name, status, total_rows, valid_rows, invalid_rows, created_by, created_at, updated_at
                 )
                 VALUES (
-                    :id_import,
-                    :file_name,
-                    :status,
-                    :total_rows,
-                    :valid_rows,
-                    :invalid_rows,
-                    :created_by,
-                    :created_at,
-                    :updated_at
+                    :id_import, :file_name, :status, :total_rows, :valid_rows, :invalid_rows, :created_by, :created_at, :updated_at
                 )
             """), {
                 "id_import": import_id,
@@ -944,57 +1067,18 @@ def validate_bulk_jadwal(file, filename, id_user):
             })
 
             for detail in detail_rows:
-
                 conn.execute(text("""
                     INSERT INTO jadwal_import_detail (
-                        id_import,
-                        row_number,
-
-                        nama_kelas_raw,
-                        mentor_raw,
-                        tanggal_raw,
-                        waktu_mulai_raw,
-                        waktu_selesai_raw,
-                        topik_raw,
-                        catatan_raw,
-                        type_pertemuan_raw,
-
-                        id_paketkelas,
-                        id_mentor,
-
-                        tanggal,
-                        waktu_mulai,
-                        waktu_selesai,
-                        type_pertemuan,
-
-                        status,
-                        error_message,
-                        created_at
+                        id_import, row_number, nama_kelas_raw, mentor_raw, tanggal_raw, waktu_mulai_raw, 
+                        waktu_selesai_raw, topik_raw, catatan_raw, type_pertemuan_raw, kelompok_raw, id_paketkelas, 
+                        id_kelompok, id_mentor, tanggal, waktu_mulai, waktu_selesai, type_pertemuan, 
+                        status, error_message, created_at
                     )
                     VALUES (
-                        :id_import,
-                        :row_number,
-
-                        :nama_kelas_raw,
-                        :mentor_raw,
-                        :tanggal_raw,
-                        :waktu_mulai_raw,
-                        :waktu_selesai_raw,
-                        :topik_raw,
-                        :catatan_raw,
-                        :type_pertemuan_raw,
-
-                        :id_paketkelas,
-                        :id_mentor,
-
-                        :tanggal,
-                        :waktu_mulai,
-                        :waktu_selesai,
-                        :type_pertemuan,
-
-                        :status,
-                        CAST(:error_message AS JSONB),
-                        :created_at
+                        :id_import, :row_number, :nama_kelas_raw, :mentor_raw, :tanggal_raw, :waktu_mulai_raw, 
+                        :waktu_selesai_raw, :topik_raw, :catatan_raw, :type_pertemuan_raw, :kelompok_raw, :id_paketkelas, 
+                        :id_kelompok, :id_mentor, :tanggal, :waktu_mulai, :waktu_selesai, :type_pertemuan, 
+                        :status, CAST(:error_message AS JSONB), :created_at
                     )
                 """), {
                     "id_import": import_id,
@@ -1018,7 +1102,9 @@ def validate_bulk_jadwal(file, filename, id_user):
                 "row": detail["row_number"],
                 "nama_kelas": detail["nama_kelas_raw"],
                 "mentor": detail["mentor_raw"],
+                "nama_kelompok": detail["kelompok_raw"],
                 "id_paketkelas": detail["id_paketkelas"],
+                "id_kelompok": detail["id_kelompok"],
                 "id_mentor": detail["id_mentor"],
                 "tanggal": (
                     detail["tanggal"].isoformat()
@@ -1068,15 +1154,7 @@ def get_bulk_jadwal_import(import_id):
 
             import_result = conn.execute(text("""
                 SELECT
-                    id_import,
-                    file_name,
-                    status,
-                    total_rows,
-                    valid_rows,
-                    invalid_rows,
-                    created_by,
-                    created_at,
-                    updated_at
+                    id_import, file_name, status, total_rows, valid_rows, invalid_rows, created_by, created_at, updated_at
                 FROM jadwal_import
                 WHERE id_import = :id_import
             """), {
@@ -1088,28 +1166,9 @@ def get_bulk_jadwal_import(import_id):
 
             details = conn.execute(text("""
                 SELECT
-                    id_detail,
-                    row_number,
-
-                    nama_kelas_raw,
-                    mentor_raw,
-                    tanggal_raw,
-                    waktu_mulai_raw,
-                    waktu_selesai_raw,
-                    topik_raw,
-                    catatan_raw,
-                    type_pertemuan_raw,
-
-                    id_paketkelas,
-                    id_mentor,
-
-                    tanggal,
-                    waktu_mulai,
-                    waktu_selesai,
-                    type_pertemuan,
-
-                    status,
-                    error_message
+                    id_detail, row_number, nama_kelas_raw, mentor_raw, tanggal_raw, waktu_mulai_raw, waktu_selesai_raw, 
+                    topik_raw, catatan_raw, type_pertemuan_raw, kelompok_raw, id_paketkelas, id_kelompok, id_mentor, 
+                    tanggal, waktu_mulai, waktu_selesai, type_pertemuan, status, error_message
                 FROM jadwal_import_detail
                 WHERE id_import = :id_import
                 ORDER BY row_number ASC
@@ -1145,11 +1204,7 @@ def commit_bulk_jadwal(import_id, id_user):
 
             import_result = conn.execute(text("""
                 SELECT
-                    id_import,
-                    status,
-                    total_rows,
-                    valid_rows,
-                    invalid_rows
+                    id_import, status, total_rows, valid_rows, invalid_rows
                 FROM jadwal_import
                 WHERE id_import = :id_import
                 FOR UPDATE
@@ -1158,28 +1213,20 @@ def commit_bulk_jadwal(import_id, id_user):
             }).mappings().fetchone()
 
             if not import_result:
-                return {
-                    "status": "NOT_FOUND"
-                }
+                return {"status": "NOT_FOUND"}
 
             # ============================================================ #
             # STATUS CHECK
             # ============================================================ #
 
             if import_result["status"] == "COMMITTED":
-                return {
-                    "status": "ALREADY_COMMITTED"
-                }
+                return {"status": "ALREADY_COMMITTED"}
 
             if import_result["status"] == "INVALID":
-                return {
-                    "status": "INVALID"
-                }
+                return {"status": "INVALID"}
 
             if import_result["status"] != "VALID":
-                return {
-                    "status": "INVALID"
-                }
+                return {"status": "INVALID"}
 
             # ============================================================ #
             # GET DETAIL
@@ -1187,17 +1234,8 @@ def commit_bulk_jadwal(import_id, id_user):
 
             details = conn.execute(text("""
                 SELECT
-                    id_detail,
-                    row_number,
-                    id_paketkelas,
-                    id_mentor,
-                    topik_raw,
-                    catatan_raw,
-                    tanggal,
-                    waktu_mulai,
-                    waktu_selesai,
-                    type_pertemuan,
-                    status
+                    id_detail, row_number, id_paketkelas, id_kelompok, id_mentor, topik_raw, catatan_raw, tanggal, 
+                    waktu_mulai, waktu_selesai, type_pertemuan, status
                 FROM jadwal_import_detail
                 WHERE id_import = :id_import
                 ORDER BY row_number ASC
@@ -1207,9 +1245,7 @@ def commit_bulk_jadwal(import_id, id_user):
             }).mappings().fetchall()
 
             if not details:
-                return {
-                    "status": "INVALID"
-                }
+                return {"status": "INVALID"}
 
             # ============================================================ #
             # DOUBLE CHECK
@@ -1222,10 +1258,16 @@ def commit_bulk_jadwal(import_id, id_user):
                         f"Row {detail['row_number']} tidak valid"
                     )
 
-                if not detail["id_paketkelas"]:
+                if not detail["id_paketkelas"] and not detail["id_kelompok"]:
                     raise ValueError(
                         f"Row {detail['row_number']} "
-                        "tidak memiliki id_paketkelas"
+                        "tidak memiliki id_paketkelas atau id_kelompok"
+                    )
+
+                if detail["id_paketkelas"] and detail["id_kelompok"]:
+                    raise ValueError(
+                        f"Row {detail['row_number']} "
+                        "tidak boleh memiliki id_paketkelas dan id_kelompok sekaligus"
                     )
 
                 if not detail["id_mentor"]:
@@ -1257,45 +1299,22 @@ def commit_bulk_jadwal(import_id, id_user):
             # ============================================================ #
 
             now = get_wib()
-
             inserted_rows = 0
 
             for detail in details:
-
                 id_jadwal = conn.execute(text("""
                     INSERT INTO jadwal_kelas (
-                        id_paketkelas,
-                        id_mentor,
-                        topik,
-                        catatan,
-                        tanggal,
-                        waktu_mulai,
-                        waktu_selesai,
-                        type_pertemuan,
-                        status,
-                        created_by,
-                        created_at,
-                        updated_by,
-                        updated_at
+                        id_paketkelas, id_kelompok, id_mentor, topik, catatan, tanggal, waktu_mulai, 
+                        waktu_selesai, type_pertemuan, status, created_by, created_at, updated_by, updated_at
                     )
                     VALUES (
-                        :id_paketkelas,
-                        :id_mentor,
-                        :topik,
-                        :catatan,
-                        :tanggal,
-                        :waktu_mulai,
-                        :waktu_selesai,
-                        :type_pertemuan,
-                        1,
-                        :created_by,
-                        :created_at,
-                        :updated_by,
-                        :updated_at
+                        :id_paketkelas, :id_kelompok, :id_mentor, :topik, :catatan, :tanggal, :waktu_mulai, 
+                        :waktu_selesai, :type_pertemuan, 1, :created_by, :created_at, :updated_by, :updated_at
                     )
                     RETURNING id_jadwal
                 """), {
                     "id_paketkelas": detail["id_paketkelas"],
+                    "id_kelompok": detail["id_kelompok"],
                     "id_mentor": detail["id_mentor"],
                     "topik": detail["topik_raw"],
                     "catatan": detail["catatan_raw"],
@@ -1359,42 +1378,21 @@ def get_bulk_jadwal_history():
 
     try:
         with engine.connect() as conn:
-
             result = conn.execute(text("""
                 SELECT
-                    ji.id_import,
-                    ji.file_name,
-                    ji.status,
-                    ji.total_rows,
-                    ji.valid_rows,
-                    ji.invalid_rows,
-                    ji.created_by,
-                    ji.created_at,
-                    ji.updated_at,
-
+                    ji.id_import, ji.file_name, ji.status, ji.total_rows, ji.valid_rows, ji.invalid_rows, 
+                    ji.created_by, ji.created_at, ji.updated_at,
                     COUNT(jid.id_jadwal) AS inserted_rows
-
                 FROM jadwal_import ji
-
                 LEFT JOIN jadwal_import_detail jid
                     ON jid.id_import = ji.id_import
                     AND jid.id_jadwal IS NOT NULL
-
                 WHERE ji.status IN (
                     'COMMITTED'
                 )
-
                 GROUP BY
-                    ji.id_import,
-                    ji.file_name,
-                    ji.status,
-                    ji.total_rows,
-                    ji.valid_rows,
-                    ji.invalid_rows,
-                    ji.created_by,
-                    ji.created_at,
-                    ji.updated_at
-
+                    ji.id_import, ji.file_name, ji.status, ji.total_rows, ji.valid_rows, ji.invalid_rows, 
+                    ji.created_by, ji.created_at, ji.updated_at
                 ORDER BY ji.created_at DESC
             """)).mappings().fetchall()
 
@@ -1404,9 +1402,7 @@ def get_bulk_jadwal_history():
             ]
 
     except SQLAlchemyError as e:
-        print(
-            f"[get_bulk_jadwal_history] Error: {e}"
-        )
+        print(f"[get_bulk_jadwal_history] Error: {e}")
         raise
 
 
@@ -1423,11 +1419,7 @@ def rollback_bulk_jadwal(import_id, id_user):
 
             import_result = conn.execute(text("""
                 SELECT
-                    id_import,
-                    status,
-                    total_rows,
-                    valid_rows,
-                    invalid_rows
+                    id_import, status, total_rows, valid_rows, invalid_rows
                 FROM jadwal_import
                 WHERE id_import = :id_import
                 FOR UPDATE
@@ -1436,23 +1428,17 @@ def rollback_bulk_jadwal(import_id, id_user):
             }).mappings().fetchone()
 
             if not import_result:
-                return {
-                    "status": "NOT_FOUND"
-                }
+                return {"status": "NOT_FOUND"}
 
             # ============================================================ #
             # STATUS CHECK
             # ============================================================ #
 
             if import_result["status"] == "ROLLED_BACK":
-                return {
-                    "status": "ALREADY_ROLLED_BACK"
-                }
+                return {"status": "ALREADY_ROLLED_BACK"}
 
             if import_result["status"] != "COMMITTED":
-                return {
-                    "status": "NOT_COMMITTED"
-                }
+                return {"status": "NOT_COMMITTED"}
 
             # ============================================================ #
             # GET JADWAL YANG BERASAL DARI IMPORT
@@ -1460,9 +1446,7 @@ def rollback_bulk_jadwal(import_id, id_user):
 
             details = conn.execute(text("""
                 SELECT
-                    id_detail,
-                    row_number,
-                    id_jadwal
+                    id_detail, row_number, id_jadwal
                 FROM jadwal_import_detail
                 WHERE id_import = :id_import
                   AND id_jadwal IS NOT NULL
@@ -1473,9 +1457,7 @@ def rollback_bulk_jadwal(import_id, id_user):
             }).mappings().fetchall()
 
             if not details:
-                return {
-                    "status": "NO_DATA"
-                }
+                return {"status": "NO_DATA"}
 
             jadwal_ids = [
                 detail["id_jadwal"]
@@ -1488,7 +1470,6 @@ def rollback_bulk_jadwal(import_id, id_user):
             # ============================================================ #
 
             deleted_rows = 0
-
             if jadwal_ids:
 
                 result = conn.execute(text("""
@@ -1500,7 +1481,6 @@ def rollback_bulk_jadwal(import_id, id_user):
                 })
 
                 deleted_ids = result.scalars().all()
-
                 deleted_rows = len(deleted_ids)
 
             # ============================================================ #
@@ -1539,17 +1519,9 @@ def rollback_bulk_jadwal(import_id, id_user):
             }
 
     except SQLAlchemyError as e:
-
-        print(
-            f"[rollback_bulk_jadwal] Error: {e}"
-        )
-
+        print(f"[rollback_bulk_jadwal] Error: {e}")
         raise
 
     except Exception as e:
-
-        print(
-            f"[rollback_bulk_jadwal] Error: {e}"
-        )
-
+        print(f"[rollback_bulk_jadwal] Error: {e}")
         raise

@@ -64,6 +64,48 @@ def is_mentor_of_kelas(id_mentor, id_paketkelas):
         return False
 
 
+def is_valid_kelompok(id_kelompok):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT id_kelompok FROM kelompok_belajar WHERE id_kelompok = :id_kelompok AND status = 1
+            """), {
+                "id_kelompok": id_kelompok
+            }).scalar()
+
+            return result is not None
+
+    except SQLAlchemyError as e:
+        print(f"[is_valid_kelompok] Error: {e}")
+        return False
+
+
+def is_jadwal_has_absensi(id_jadwal):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT 1
+                WHERE EXISTS (
+                    SELECT 1 FROM absensi_mentor WHERE id_jadwal = :id_jadwal AND status = 1
+                )
+                OR EXISTS (
+                    SELECT 1 FROM absensi_peserta WHERE id_jadwal = :id_jadwal AND status = 1
+                )
+            """), {
+                "id_jadwal": id_jadwal
+            }).fetchone()
+
+            return bool(result)
+
+    except SQLAlchemyError as e:
+        print(f"[is_jadwal_has_absensi] Error: {e}")
+        return False
+
+
 def get_mentor_dropdown(id_paketkelas=None):
     engine = get_connection()
 
@@ -124,15 +166,15 @@ def insert_jadwal(payload):
         with engine.begin() as conn:
             result = conn.execute(text("""
                 INSERT INTO jadwal_kelas (
-                    id_paketkelas, id_mentor, topik, catatan, tanggal, waktu_mulai, waktu_selesai, type_pertemuan, 
+                    id_paketkelas, id_kelompok, id_mentor, topik, catatan, tanggal, waktu_mulai, waktu_selesai, type_pertemuan, 
                     status, created_by, created_at, updated_by, updated_at
                 )
                 VALUES (
-                    :id_paketkelas, :id_mentor, :topik, :catatan, :tanggal, :waktu_mulai, :waktu_selesai, :type_pertemuan, 
+                    :id_paketkelas, :id_kelompok, :id_mentor, :topik, :catatan, :tanggal, :waktu_mulai, :waktu_selesai, :type_pertemuan, 
                     1, :created_by, :now, :updated_by, :now
                 )
                 RETURNING
-                    id_jadwal, id_paketkelas, id_mentor, topik, catatan, tanggal, waktu_mulai, waktu_selesai, type_pertemuan,
+                    id_jadwal, id_paketkelas, id_kelompok, id_mentor, topik, catatan, tanggal, waktu_mulai, waktu_selesai, type_pertemuan,
                     status, created_by, created_at, updated_by, updated_at
             """), {
                 **payload,
@@ -150,6 +192,7 @@ def get_all_jadwal(
     id_mentor=None,
     id_paketkelas=None,
     search=None,
+    id_kelompok=None,
     start_date=None,
     end_date=None,
     page=1,
@@ -182,11 +225,16 @@ def get_all_jadwal(
                 where_clause += " AND j.id_paketkelas = :id_paketkelas"
                 params["id_paketkelas"] = id_paketkelas
 
+            if id_kelompok is not None:
+                where_clause += " AND j.id_kelompok = :id_kelompok"
+                params["id_kelompok"] = id_kelompok
+
             if search and search.strip():
                 where_clause += """
                     AND (
                         u.nama ILIKE :search
                         OR pk.nama_kelas ILIKE :search
+                        OR kb.nama_kelompok ILIKE :search
                         OR j.topik ILIKE :search
                         OR j.catatan ILIKE :search
                     )
@@ -198,6 +246,7 @@ def get_all_jadwal(
                     SELECT COUNT(*)
                     FROM jadwal_kelas j
                     LEFT JOIN paketkelas pk ON pk.id_paketkelas = j.id_paketkelas
+                    LEFT JOIN kelompok_belajar kb ON kb.id_kelompok = j.id_kelompok
                     LEFT JOIN users u ON u.id_user = j.id_mentor
                     {where_clause}
                 """),
@@ -213,7 +262,9 @@ def get_all_jadwal(
             result = conn.execute(
                 text(f"""
                     SELECT
-                        j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_mentor, u.nama AS nama_mentor, 
+                        j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_kelompok, kb.nama_kelompok,
+                        CASE WHEN j.id_kelompok IS NOT NULL THEN 'KELOMPOK' ELSE 'KELAS' END AS target_type,
+                        j.id_mentor, u.nama AS nama_mentor,
                         u.nickname AS nickname_mentor,j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
                         j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                         COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
@@ -222,6 +273,7 @@ def get_all_jadwal(
                         j.type_pertemuan, j.status, j.created_by, j.created_at, j.updated_by, j.updated_at
                     FROM jadwal_kelas j
                     LEFT JOIN paketkelas pk ON pk.id_paketkelas = j.id_paketkelas
+                    LEFT JOIN kelompok_belajar kb ON kb.id_kelompok = j.id_kelompok
                     LEFT JOIN users u ON u.id_user = j.id_mentor
                     {where_clause}
                     ORDER BY
@@ -258,7 +310,9 @@ def get_jadwal_by_id(id_jadwal):
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
-                    j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_mentor, u.nama AS nama_mentor,
+                    j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_kelompok, kb.nama_kelompok,
+                    CASE WHEN j.id_kelompok IS NOT NULL THEN 'KELOMPOK' ELSE 'KELAS' END AS target_type,
+                    j.id_mentor, u.nama AS nama_mentor,
                     j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                 
@@ -271,6 +325,8 @@ def get_jadwal_by_id(id_jadwal):
                 FROM jadwal_kelas j
                 LEFT JOIN paketkelas pk
                     ON pk.id_paketkelas = j.id_paketkelas
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
                 LEFT JOIN users u
                     ON u.id_user = j.id_mentor
                 WHERE j.id_jadwal = :id_jadwal
@@ -295,6 +351,7 @@ def update_jadwal(payload):
                 UPDATE jadwal_kelas
                 SET
                     id_paketkelas = :id_paketkelas,
+                    id_kelompok = :id_kelompok,
                     id_mentor = :id_mentor,
                     topik = :topik,
                     catatan = :catatan,
@@ -506,6 +563,7 @@ def get_all_jadwal_by_mentor(
                     AND (
                         u.nama ILIKE :search
                         OR pk.nama_kelas ILIKE :search
+                        OR kb.nama_kelompok ILIKE :search
                         OR j.topik ILIKE :search
                         OR j.catatan ILIKE :search
                     )
@@ -518,6 +576,9 @@ def get_all_jadwal_by_mentor(
                         j.id_jadwal,
                         j.id_paketkelas,
                         pk.nama_kelas,
+                        j.id_kelompok,
+                        kb.nama_kelompok,
+                        CASE WHEN j.id_kelompok IS NOT NULL THEN 'KELOMPOK' ELSE 'KELAS' END AS target_type,
                         j.id_mentor,
                         u.nama AS nama_mentor,
                         u.nickname AS nickname_mentor,
@@ -558,6 +619,10 @@ def get_all_jadwal_by_mentor(
                         ON pk.id_paketkelas = j.id_paketkelas
                        AND pk.status = 1
 
+                    LEFT JOIN kelompok_belajar kb
+                        ON kb.id_kelompok = j.id_kelompok
+                       AND kb.status = 1
+
                     LEFT JOIN users u
                         ON u.id_user = j.id_mentor
                        AND u.status = 1
@@ -597,7 +662,9 @@ def get_jadwal_by_id_mentor(id_jadwal, id_mentor):
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
-                    j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor,
+                    j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_kelompok, kb.nama_kelompok,
+                    CASE WHEN j.id_kelompok IS NOT NULL THEN 'KELOMPOK' ELSE 'KELAS' END AS target_type,
+                    j.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor,
                     j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                 
@@ -611,6 +678,9 @@ def get_jadwal_by_id_mentor(id_jadwal, id_mentor):
                 LEFT JOIN paketkelas pk
                     ON pk.id_paketkelas = j.id_paketkelas
                    AND pk.status = 1
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
+                   AND kb.status = 1
                 LEFT JOIN users u
                     ON u.id_user = j.id_mentor
                    AND u.status = 1
@@ -708,6 +778,7 @@ def get_group_all_jadwal_by_mentor(
                     AND (
                         u.nama ILIKE :search
                         OR pk.nama_kelas ILIKE :search
+                        OR kb.nama_kelompok ILIKE :search
                         OR j.topik ILIKE :search
                         OR j.catatan ILIKE :search
                     )
@@ -720,6 +791,9 @@ def get_group_all_jadwal_by_mentor(
                         j.id_jadwal,
                         j.id_paketkelas,
                         pk.nama_kelas,
+                        j.id_kelompok,
+                        kb.nama_kelompok,
+                        CASE WHEN j.id_kelompok IS NOT NULL THEN 'KELOMPOK' ELSE 'KELAS' END AS target_type,
 
                         j.id_mentor,
                         u.nama AS nama_mentor,
@@ -763,6 +837,10 @@ def get_group_all_jadwal_by_mentor(
                     LEFT JOIN paketkelas pk
                         ON pk.id_paketkelas = j.id_paketkelas
                        AND pk.status = 1
+
+                    LEFT JOIN kelompok_belajar kb
+                        ON kb.id_kelompok = j.id_kelompok
+                       AND kb.status = 1
 
                     LEFT JOIN users u
                         ON u.id_user = j.id_mentor
@@ -829,6 +907,9 @@ def get_group_all_jadwal_by_mentor(
                     "id_jadwal": item["id_jadwal"],
                     "id_paketkelas": item["id_paketkelas"],
                     "nama_kelas": item["nama_kelas"],
+                    "id_kelompok": item["id_kelompok"],
+                    "nama_kelompok": item["nama_kelompok"],
+                    "target_type": item["target_type"],
                     "topik": item["topik"],
                     "catatan": item["catatan"],
                     "type_pertemuan": item["type_pertemuan"],
@@ -900,6 +981,9 @@ def get_group_jadwal_by_id_mentor(id_jadwal, id_mentor):
                     j.id_jadwal,
                     j.id_paketkelas,
                     pk.nama_kelas,
+                    j.id_kelompok,
+                    kb.nama_kelompok,
+                    CASE WHEN j.id_kelompok IS NOT NULL THEN 'KELOMPOK' ELSE 'KELAS' END AS target_type,
 
                     j.id_mentor,
                     u.nama AS nama_mentor,
@@ -943,6 +1027,9 @@ def get_group_jadwal_by_id_mentor(id_jadwal, id_mentor):
                 LEFT JOIN paketkelas pk
                     ON pk.id_paketkelas = j.id_paketkelas
                    AND pk.status = 1
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
+                   AND kb.status = 1
 
                 LEFT JOIN users u
                     ON u.id_user = j.id_mentor
@@ -967,7 +1054,7 @@ def get_group_jadwal_by_id_mentor(id_jadwal, id_mentor):
                   ) = :waktu_selesai_efektif
 
                 ORDER BY
-                    pk.nama_kelas ASC,
+                    COALESCE(pk.nama_kelas, kb.nama_kelompok) ASC,
                     j.id_jadwal ASC
             """), {
                 "id_mentor": id_mentor,
@@ -999,6 +1086,9 @@ def get_group_jadwal_by_id_mentor(id_jadwal, id_mentor):
                         "id_jadwal": row["id_jadwal"],
                         "id_paketkelas": row["id_paketkelas"],
                         "nama_kelas": row["nama_kelas"],
+                        "id_kelompok": row["id_kelompok"],
+                        "nama_kelompok": row["nama_kelompok"],
+                        "target_type": row["target_type"],
 
                         "topik": row["topik"],
                         "catatan": row["catatan"],
@@ -1036,4 +1126,119 @@ def get_group_jadwal_by_id_mentor(id_jadwal, id_mentor):
 
     except SQLAlchemyError as e:
         print(f"[get_jadwal_by_id_mentor] Error: {e}")
+        raise
+
+
+
+# ============================================================================ #
+#                         MANAJEMEN JADWAL BY - PESERTA                        #
+# ============================================================================ #
+
+def get_all_jadwal_by_peserta(id_peserta, start_date=None, end_date=None):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+
+            where_clause = ""
+            params = {
+                "id_peserta": id_peserta
+            }
+
+            if start_date is not None:
+                where_clause += """
+                    AND COALESCE(j.tanggal_reschedule, j.tanggal) >= :start_date
+                """
+                params["start_date"] = start_date
+
+            if end_date is not None:
+                where_clause += """
+                    AND COALESCE(j.tanggal_reschedule, j.tanggal) <= :end_date
+                """
+                params["end_date"] = end_date
+
+            # ==========================================
+            # Jadwal milik peserta:
+            # - target kelas    -> peserta aktif di kelas tsb
+            # - target kelompok -> peserta aktif di kelompok tsb
+            # ==========================================
+
+            result = conn.execute(
+                text(f"""
+                    SELECT
+                        j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_kelompok, kb.nama_kelompok,
+                        CASE WHEN j.id_kelompok IS NOT NULL THEN 'KELOMPOK' ELSE 'KELAS' END AS target_type,
+                        j.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor,
+                        j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
+                        j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
+
+                        COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
+                        COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai) AS waktu_mulai_efektif,
+                        COALESCE(j.waktu_selesai_reschedule, j.waktu_selesai) AS waktu_selesai_efektif,
+
+                        j.type_pertemuan,
+
+                        CASE
+                            WHEN am.id_absensi_mentor IS NULL THEN 'BELUM_CHECK_IN'
+                            WHEN am.check_out_at IS NULL THEN 'CHECK_IN'
+                            ELSE 'SELESAI'
+                        END AS status_absensi_mentor,
+
+                        ap.id_absensi_peserta,
+                        ap.status_kehadiran AS status_absensi_saya,
+                        ap.check_in_at AS check_in_saya
+
+                    FROM jadwal_kelas j
+                    LEFT JOIN paketkelas pk
+                        ON pk.id_paketkelas = j.id_paketkelas
+                       AND pk.status = 1
+                    LEFT JOIN kelompok_belajar kb
+                        ON kb.id_kelompok = j.id_kelompok
+                       AND kb.status = 1
+                    LEFT JOIN users u
+                        ON u.id_user = j.id_mentor
+                       AND u.status = 1
+                    LEFT JOIN absensi_mentor am
+                        ON am.id_jadwal = j.id_jadwal
+                       AND am.status = 1
+                    LEFT JOIN absensi_peserta ap
+                        ON ap.id_jadwal = j.id_jadwal
+                       AND ap.id_peserta = :id_peserta
+                       AND ap.status = 1
+                    WHERE j.status = 1
+                      AND (
+                          (
+                              pk.id_paketkelas IS NOT NULL
+                              AND EXISTS (
+                                  SELECT 1
+                                  FROM pesertakelas pks
+                                  WHERE pks.id_paketkelas = j.id_paketkelas
+                                    AND pks.id_user = :id_peserta
+                                    AND pks.status = 1
+                              )
+                          )
+                          OR (
+                              kb.id_kelompok IS NOT NULL
+                              AND EXISTS (
+                                  SELECT 1
+                                  FROM kelompok_belajar_peserta kbp
+                                  WHERE kbp.id_kelompok = j.id_kelompok
+                                    AND kbp.id_peserta = :id_peserta
+                                    AND kbp.status = 1
+                              )
+                          )
+                      )
+                      {where_clause}
+                    ORDER BY
+                        COALESCE(j.tanggal_reschedule, j.tanggal) ASC,
+                        COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai) ASC,
+                        j.id_jadwal ASC
+                """),
+                params
+            ).mappings().fetchall()
+
+            return [serialize_value(row) for row in result]
+
+    except SQLAlchemyError as e:
+        print(f"[get_all_jadwal_by_peserta] Error: {e}")
         raise

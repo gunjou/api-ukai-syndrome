@@ -6,6 +6,43 @@ from ..utils.helper import serialize_value
 
 
 # ============================================================================ #
+#                     #ANCHOR - ROSTER JADWAL (KELAS / KELOMPOK)                #
+# ============================================================================ #
+# CTE daftar peserta yang seharusnya hadir pada satu jadwal (:id_jadwal):
+# - jadwal kelas    -> peserta aktif pada kelas tsb
+# - jadwal kelompok -> anggota aktif pada kelompok tsb
+# Dipakai bersama oleh query roster, absensi, dan check-in peserta.
+
+ROSTER_JADWAL_CTE = """
+    WITH roster AS (
+        SELECT pks.id_user AS id_peserta
+        FROM jadwal_kelas jr
+        INNER JOIN paketkelas pkr
+            ON pkr.id_paketkelas = jr.id_paketkelas
+           AND pkr.status = 1
+        INNER JOIN pesertakelas pks
+            ON pks.id_paketkelas = jr.id_paketkelas
+           AND pks.status = 1
+        WHERE jr.id_jadwal = :id_jadwal
+          AND jr.status = 1
+
+        UNION
+
+        SELECT kbp.id_peserta
+        FROM jadwal_kelas jr
+        INNER JOIN kelompok_belajar kbr
+            ON kbr.id_kelompok = jr.id_kelompok
+           AND kbr.status = 1
+        INNER JOIN kelompok_belajar_peserta kbp
+            ON kbp.id_kelompok = jr.id_kelompok
+           AND kbp.status = 1
+        WHERE jr.id_jadwal = :id_jadwal
+          AND jr.status = 1
+    )
+"""
+
+
+# ============================================================================ #
 #                   #ANCHOR - SHARED HELPER (ABSENSI PESERTA)                  #
 # ============================================================================ #
 
@@ -77,6 +114,7 @@ def get_all_absensi_mentor():
                 SELECT
                     am.id_absensi_mentor, am.id_jadwal,
                     j.id_paketkelas, pk.nama_kelas,
+                    j.id_kelompok, kb.nama_kelompok,
                     am.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor, j.topik, j.catatan,
                     
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal,
@@ -92,13 +130,17 @@ def get_all_absensi_mentor():
                 INNER JOIN jadwal_kelas j
                     ON j.id_jadwal = am.id_jadwal
                    AND j.status = 1
-                INNER JOIN paketkelas pk
+                LEFT JOIN paketkelas pk
                     ON pk.id_paketkelas = j.id_paketkelas
                    AND pk.status = 1
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
+                   AND kb.status = 1
                 INNER JOIN users u
                     ON u.id_user = am.id_mentor
                    AND u.status = 1
                 WHERE am.status = 1
+                  AND (pk.id_paketkelas IS NOT NULL OR kb.id_kelompok IS NOT NULL)
                 ORDER BY
                     COALESCE(
                         j.tanggal_reschedule,
@@ -125,7 +167,7 @@ def get_absensi_mentor_by_id(id_absensi):
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
-                    am.id_absensi_mentor, am.id_jadwal, j.id_paketkelas, pk.nama_kelas, am.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor,
+                    am.id_absensi_mentor, am.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_kelompok, kb.nama_kelompok, am.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor,
                     j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai, j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                     
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
@@ -141,14 +183,18 @@ def get_absensi_mentor_by_id(id_absensi):
                 INNER JOIN jadwal_kelas j
                     ON j.id_jadwal = am.id_jadwal
                    AND j.status = 1
-                INNER JOIN paketkelas pk
+                LEFT JOIN paketkelas pk
                     ON pk.id_paketkelas = j.id_paketkelas
                    AND pk.status = 1
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
+                   AND kb.status = 1
                 INNER JOIN users u
                     ON u.id_user = am.id_mentor
                    AND u.status = 1
                 WHERE am.id_absensi_mentor = :id_absensi
                   AND am.status = 1
+                  AND (pk.id_paketkelas IS NOT NULL OR kb.id_kelompok IS NOT NULL)
             """), {
                 "id_absensi": id_absensi
             }).mappings().fetchone()
@@ -170,6 +216,8 @@ def get_status_absensi_mentor_by_jadwal(id_jadwal, id_mentor):
                     j.id_jadwal,
                     j.id_paketkelas,
                     pk.nama_kelas,
+                    j.id_kelompok,
+                    kb.nama_kelompok,
                     j.id_mentor,
                     u.nama AS nama_mentor,
                     j.topik, 
@@ -192,9 +240,12 @@ def get_status_absensi_mentor_by_jadwal(id_jadwal, id_mentor):
                             THEN 'SELESAI'
                     END AS status_absensi
                 FROM jadwal_kelas j
-                INNER JOIN paketkelas pk
+                LEFT JOIN paketkelas pk
                     ON pk.id_paketkelas = j.id_paketkelas
                     AND pk.status = 1
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
+                    AND kb.status = 1
                 INNER JOIN users u
                     ON u.id_user = j.id_mentor
                     AND u.status = 1
@@ -206,6 +257,7 @@ def get_status_absensi_mentor_by_jadwal(id_jadwal, id_mentor):
                     j.id_jadwal = :id_jadwal
                     AND j.id_mentor = :id_mentor
                     AND j.status = 1
+                    AND (pk.id_paketkelas IS NOT NULL OR kb.id_kelompok IS NOT NULL)
                 LIMIT 1
             """), {
                 "id_jadwal": id_jadwal,
@@ -230,7 +282,7 @@ def get_jadwal_absensi_mentor(id_jadwal, id_mentor):
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
-                    j.id_jadwal, j.id_paketkelas, j.id_mentor, j.topik, j.catatan,
+                    j.id_jadwal, j.id_paketkelas, j.id_kelompok, j.id_mentor, j.topik, j.catatan,
                     j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                     
@@ -400,7 +452,7 @@ def get_all_absensi_peserta():
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
-                    ap.id_absensi_peserta, ap.id_jadwal, j.id_paketkelas, pk.nama_kelas,
+                    ap.id_absensi_peserta, ap.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_kelompok, kb.nama_kelompok,
                     ap.id_peserta, u.nama AS nama_peserta, u.nickname AS nickname_peserta, j.topik, j.catatan,
                     
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal,
@@ -414,13 +466,17 @@ def get_all_absensi_peserta():
                 INNER JOIN jadwal_kelas j
                     ON j.id_jadwal = ap.id_jadwal
                    AND j.status = 1
-                INNER JOIN paketkelas pk
+                LEFT JOIN paketkelas pk
                     ON pk.id_paketkelas = j.id_paketkelas
                    AND pk.status = 1
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
+                   AND kb.status = 1
                 INNER JOIN users u
                     ON u.id_user = ap.id_peserta
                    AND u.status = 1
                 WHERE ap.status = 1
+                  AND (pk.id_paketkelas IS NOT NULL OR kb.id_kelompok IS NOT NULL)
                 ORDER BY
                     COALESCE(
                         j.tanggal_reschedule,
@@ -447,7 +503,7 @@ def get_absensi_peserta_by_id(id_absensi):
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
-                    ap.id_absensi_peserta, ap.id_jadwal, j.id_paketkelas, pk.nama_kelas,
+                    ap.id_absensi_peserta, ap.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_kelompok, kb.nama_kelompok,
                     ap.id_peserta, u.nama AS nama_peserta, u.nickname AS nickname_peserta,
                     j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
@@ -463,14 +519,18 @@ def get_absensi_peserta_by_id(id_absensi):
                 INNER JOIN jadwal_kelas j
                     ON j.id_jadwal = ap.id_jadwal
                    AND j.status = 1
-                INNER JOIN paketkelas pk
+                LEFT JOIN paketkelas pk
                     ON pk.id_paketkelas = j.id_paketkelas
                    AND pk.status = 1
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
+                   AND kb.status = 1
                 INNER JOIN users u
                     ON u.id_user = ap.id_peserta
                    AND u.status = 1
                 WHERE ap.id_absensi_peserta = :id_absensi
                   AND ap.status = 1
+                  AND (pk.id_paketkelas IS NOT NULL OR kb.id_kelompok IS NOT NULL)
             """), {
                 "id_absensi": id_absensi
             }).mappings().fetchone()
@@ -496,6 +556,7 @@ def get_all_absensi_peserta_by_mentor(id_mentor):
                 SELECT
                     ap.id_absensi_peserta, ap.id_jadwal,
                     j.id_paketkelas, pk.nama_kelas,
+                    j.id_kelompok, kb.nama_kelompok,
                     ap.id_peserta, u.nama AS nama_peserta, u.nickname AS nickname_peserta, j.topik, j.catatan,
                     COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal,
                     COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai) AS waktu_mulai,
@@ -507,14 +568,18 @@ def get_all_absensi_peserta_by_mentor(id_mentor):
                 FROM absensi_peserta ap
                 INNER JOIN jadwal_kelas j
                     ON j.id_jadwal = ap.id_jadwal
-                INNER JOIN paketkelas pk
+                LEFT JOIN paketkelas pk
                     ON pk.id_paketkelas = j.id_paketkelas
+                   AND pk.status = 1
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
+                   AND kb.status = 1
                 INNER JOIN users u
                     ON u.id_user = ap.id_peserta
                 WHERE ap.status = 1
                   AND j.status = 1
                   AND j.id_mentor = :id_mentor
-                  AND pk.status = 1
+                  AND (pk.id_paketkelas IS NOT NULL OR kb.id_kelompok IS NOT NULL)
                   AND u.status = 1
                 ORDER BY
                     COALESCE(j.tanggal_reschedule, j.tanggal) DESC,
@@ -546,6 +611,7 @@ def get_absensi_peserta_by_id_mentor(id_absensi, id_mentor):
                 SELECT
                     ap.id_absensi_peserta, ap.id_jadwal,
                     j.id_paketkelas, pk.nama_kelas,
+                    j.id_kelompok, kb.nama_kelompok,
                     ap.id_peserta, u.nama AS nama_peserta, u.nickname AS nickname_peserta,
                     j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
@@ -561,15 +627,19 @@ def get_absensi_peserta_by_id_mentor(id_absensi, id_mentor):
                 FROM absensi_peserta ap
                 INNER JOIN jadwal_kelas j
                     ON j.id_jadwal = ap.id_jadwal
-                INNER JOIN paketkelas pk
+                LEFT JOIN paketkelas pk
                     ON pk.id_paketkelas = j.id_paketkelas
+                   AND pk.status = 1
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
+                   AND kb.status = 1
                 INNER JOIN users u
                     ON u.id_user = ap.id_peserta
                 WHERE ap.id_absensi_peserta = :id_absensi
                   AND ap.status = 1
                   AND j.id_mentor = :id_mentor
                   AND j.status = 1
-                  AND pk.status = 1
+                  AND (pk.id_paketkelas IS NOT NULL OR kb.id_kelompok IS NOT NULL)
                   AND u.status = 1
             """), {
                 "id_absensi": id_absensi,
@@ -660,7 +730,7 @@ def get_jadwal_absensi_peserta(id_jadwal):
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
-                    j.id_jadwal, j.id_paketkelas, pk.nama_kelas,
+                    j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_kelompok, kb.nama_kelompok,
                     j.id_mentor, u.nama AS nama_mentor, j.topik, j.catatan,
                     j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
@@ -669,13 +739,17 @@ def get_jadwal_absensi_peserta(id_jadwal):
                     COALESCE(j.waktu_selesai_reschedule, j.waktu_selesai) AS waktu_selesai_efektif,
                     j.type_pertemuan, j.status
                 FROM jadwal_kelas j
-                INNER JOIN paketkelas pk
+                LEFT JOIN paketkelas pk
                     ON pk.id_paketkelas = j.id_paketkelas
+                   AND pk.status = 1
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
+                   AND kb.status = 1
                 INNER JOIN users u
                     ON u.id_user = j.id_mentor
                 WHERE j.id_jadwal = :id_jadwal
                   AND j.status = 1
-                  AND pk.status = 1
+                  AND (pk.id_paketkelas IS NOT NULL OR kb.id_kelompok IS NOT NULL)
                   AND u.status = 1
             """), {
                 "id_jadwal": id_jadwal
@@ -695,7 +769,7 @@ def get_jadwal_absensi_peserta_by_mentor(id_jadwal, id_mentor):
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
-                    j.id_jadwal, j.id_paketkelas, pk.nama_kelas,
+                    j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_kelompok, kb.nama_kelompok,
                     j.id_mentor, u.nama AS nama_mentor, j.topik, j.catatan,
                     j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
@@ -704,14 +778,18 @@ def get_jadwal_absensi_peserta_by_mentor(id_jadwal, id_mentor):
                     COALESCE(j.waktu_selesai_reschedule, j.waktu_selesai) AS waktu_selesai_efektif,
                     j.type_pertemuan, j.status
                 FROM jadwal_kelas j
-                INNER JOIN paketkelas pk
+                LEFT JOIN paketkelas pk
                     ON pk.id_paketkelas = j.id_paketkelas
+                   AND pk.status = 1
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
+                   AND kb.status = 1
                 INNER JOIN users u
                     ON u.id_user = j.id_mentor
                 WHERE j.id_jadwal = :id_jadwal
                   AND j.id_mentor = :id_mentor
                   AND j.status = 1
-                  AND pk.status = 1
+                  AND (pk.id_paketkelas IS NOT NULL OR kb.id_kelompok IS NOT NULL)
                   AND u.status = 1
             """), {
                 "id_jadwal": id_jadwal,
@@ -730,10 +808,17 @@ def get_absensi_peserta_by_jadwal(id_jadwal):
 
     try:
         with engine.connect() as conn:
-            result = conn.execute(text("""
+            # ==========================================
+            # Roster mengikuti target jadwal:
+            # kelas -> pesertakelas, kelompok -> anggota kelompok
+            # ==========================================
+
+            result = conn.execute(text(f"""
+                {ROSTER_JADWAL_CTE}
                 SELECT
                     u.id_user AS id_peserta, u.nama, u.nickname,
                     pk.id_paketkelas, pk.nama_kelas,
+                    kb.id_kelompok, kb.nama_kelompok,
                     j.id_jadwal,
                     COALESCE(ap.status_kehadiran, 'ALPHA') AS status_kehadiran,
                     ap.id_absensi_peserta, ap.check_in_at,
@@ -742,23 +827,21 @@ def get_absensi_peserta_by_jadwal(id_jadwal):
                         WHEN ap.id_absensi_peserta IS NULL THEN FALSE
                         ELSE TRUE
                     END AS sudah_absen
-                FROM jadwal_kelas j
-                INNER JOIN paketkelas pk
+                FROM roster r
+                INNER JOIN jadwal_kelas j
+                    ON j.id_jadwal = :id_jadwal
+                LEFT JOIN paketkelas pk
                     ON pk.id_paketkelas = j.id_paketkelas
-                INNER JOIN pesertakelas pks
-                    ON pks.id_paketkelas = j.id_paketkelas
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
                 INNER JOIN users u
-                    ON u.id_user = pks.id_user
+                    ON u.id_user = r.id_peserta
+                   AND u.role = 'peserta'
+                   AND u.status = 1
                 LEFT JOIN absensi_peserta ap
                     ON ap.id_jadwal = j.id_jadwal
                    AND ap.id_peserta = u.id_user
                    AND ap.status = 1
-                WHERE j.id_jadwal = :id_jadwal
-                  AND j.status = 1
-                  AND pk.status = 1
-                  AND pks.status = 1
-                  AND u.role = 'peserta'
-                  AND u.status = 1
                 ORDER BY u.nama ASC
             """), {
                 "id_jadwal": id_jadwal
@@ -782,7 +865,7 @@ def get_absensi_by_jadwal(id_jadwal):
 
             jadwal = conn.execute(text("""
                 SELECT
-                    j.id_jadwal, j.id_paketkelas, pk.nama_kelas,
+                    j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_kelompok, kb.nama_kelompok,
                     j.id_mentor, um.nama AS nama_mentor, um.nickname AS nickname_mentor,
                     j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
@@ -793,14 +876,18 @@ def get_absensi_by_jadwal(id_jadwal):
                     j.type_pertemuan, j.status
                     
                 FROM jadwal_kelas j
-                INNER JOIN paketkelas pk
+                LEFT JOIN paketkelas pk
                     ON pk.id_paketkelas = j.id_paketkelas
                    AND pk.status = 1
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
+                   AND kb.status = 1
                 INNER JOIN users um
                     ON um.id_user = j.id_mentor
                    AND um.status = 1
                 WHERE j.id_jadwal = :id_jadwal
                   AND j.status = 1
+                  AND (pk.id_paketkelas IS NOT NULL OR kb.id_kelompok IS NOT NULL)
             """), {
                 "id_jadwal": id_jadwal
             }).mappings().fetchone()
@@ -824,25 +911,23 @@ def get_absensi_by_jadwal(id_jadwal):
                 "id_jadwal": id_jadwal
             }).mappings().fetchone()
 
-            peserta = conn.execute(text("""
+            peserta = conn.execute(text(f"""
+                {ROSTER_JADWAL_CTE}
                 SELECT
                     u.id_user AS id_peserta, u.nama AS nama_peserta, u.nickname AS nickname_peserta,
                     ap.id_absensi_peserta, ap.status_kehadiran, ap.check_in_at, ap.latitude, ap.longitude, ap.location_accuracy, ap.status
-                FROM pesertakelas pkls
+                FROM roster r
                 INNER JOIN users u
-                    ON u.id_user = pkls.id_user
+                    ON u.id_user = r.id_peserta
                    AND u.role = 'peserta'
                    AND u.status = 1
                 LEFT JOIN absensi_peserta ap
-                    ON ap.id_peserta = pkls.id_user
+                    ON ap.id_peserta = r.id_peserta
                    AND ap.id_jadwal = :id_jadwal
                    AND ap.status = 1
-                WHERE pkls.id_paketkelas = :id_paketkelas
-                  AND pkls.status = 1
                 ORDER BY u.nama ASC
             """), {
-                "id_jadwal": id_jadwal,
-                "id_paketkelas": jadwal["id_paketkelas"]
+                "id_jadwal": id_jadwal
             }).mappings().fetchall()
 
             peserta_data = []
@@ -880,7 +965,7 @@ def get_jadwal_for_manual_attendance(id_jadwal, id_mentor):
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
-                    j.id_jadwal, j.id_paketkelas, j.id_mentor, j.topik, j.catatan,
+                    j.id_jadwal, j.id_paketkelas, j.id_kelompok, j.id_mentor, j.topik, j.catatan,
                     j.tanggal, j.waktu_mulai, j.waktu_selesai,
                     j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
                     j.type_pertemuan
@@ -1025,67 +1110,122 @@ def get_peserta_by_mentor(id_mentor, id_paketkelas):
 
 
 
+# ============================================================================ #
+#                  #ANCHOR - PESERTA BERDASARKAN ROSTER JADWAL                 #
+# ============================================================================ #
 
+def get_peserta_roster_jadwal(id_jadwal, id_peserta):
+    """Cek peserta termasuk roster jadwal (berlaku untuk jadwal kelas maupun kelompok)"""
 
+    engine = get_connection()
 
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text(f"""
+                {ROSTER_JADWAL_CTE}
+                SELECT u.id_user, u.nama, u.nickname
+                FROM roster r
+                INNER JOIN users u
+                    ON u.id_user = r.id_peserta
+                   AND u.role = 'peserta'
+                   AND u.status = 1
+                WHERE r.id_peserta = :id_peserta
+            """), {
+                "id_jadwal": id_jadwal,
+                "id_peserta": id_peserta
+            }).mappings().fetchone()
 
+            return serialize_value(result) if result else None
 
-
+    except SQLAlchemyError as e:
+        print(f"[get_peserta_roster_jadwal] Error: {e}")
+        return None
 
 
 
 # ============================================================================ #
-#                                ABSENSI MENTOR                                #
+#                       #ANCHOR - ABSENSI PESERTA (CHECK-IN)                   #
 # ============================================================================ #
 
+def get_jadwal_for_peserta_checkin(id_jadwal, id_peserta):
+    """
+    Data yang dibutuhkan untuk check-in mandiri peserta.
+    Hanya mengembalikan jadwal jika peserta termasuk roster jadwal tsb.
+    """
+
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text(f"""
+                {ROSTER_JADWAL_CTE}
+                SELECT
+                    j.id_jadwal, j.id_paketkelas, j.id_kelompok, j.id_mentor, j.type_pertemuan,
+
+                    COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
+                    COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai) AS waktu_mulai_efektif,
+                    COALESCE(j.waktu_selesai_reschedule, j.waktu_selesai) AS waktu_selesai_efektif,
+
+                    (COALESCE(j.tanggal_reschedule, j.tanggal) = :today) AS is_hari_ini,
+
+                    am.id_absensi_mentor,
+                    am.check_in_at AS mentor_check_in_at,
+                    am.check_out_at AS mentor_check_out_at,
+                    am.check_in_latitude AS mentor_latitude,
+                    am.check_in_longitude AS mentor_longitude,
+
+                    ap.id_absensi_peserta
+                FROM jadwal_kelas j
+                LEFT JOIN absensi_mentor am
+                    ON am.id_jadwal = j.id_jadwal
+                   AND am.status = 1
+                LEFT JOIN absensi_peserta ap
+                    ON ap.id_jadwal = j.id_jadwal
+                   AND ap.id_peserta = :id_peserta
+                   AND ap.status = 1
+                WHERE j.id_jadwal = :id_jadwal
+                  AND j.status = 1
+                  AND EXISTS (
+                      SELECT 1 FROM roster r WHERE r.id_peserta = :id_peserta
+                  )
+            """), {
+                "id_jadwal": id_jadwal,
+                "id_peserta": id_peserta,
+                "today": get_wib().date()
+            }).mappings().fetchone()
+
+            return serialize_value(result) if result else None
+
+    except SQLAlchemyError as e:
+        print(f"[get_jadwal_for_peserta_checkin] Error: {e}")
+        return None
 
 
+def insert_absensi_peserta_checkin(payload):
+    engine = get_connection()
 
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text("""
+                INSERT INTO absensi_peserta (
+                    id_jadwal, id_peserta, status_kehadiran, check_in_at,
+                    latitude, longitude, location_accuracy, status, created_at, updated_at
+                )
+                VALUES (
+                    :id_jadwal, :id_peserta, 'HADIR', :now,
+                    :latitude, :longitude, :accuracy, 1, :now, :now
+                )
+                RETURNING id_absensi_peserta
+            """), {
+                **payload,
+                "now": get_wib()
+            }).scalar()
 
+            if not result:
+                return None
 
+            return get_absensi_peserta_by_id(result)
 
-# ============================================================================ #
-#                          ABSENSI BERDASARKAN JADWAL                          #
-# ============================================================================ #
-
-
-
-
-
-# ============================================================================ #
-#                     ABSENSI MENTOR - CHECK IN & CHECK OUT                    #
-# ============================================================================ #
-
-
-
-
-
-
-
-
-
-
-# ============================================================================ #
-#                          MANAJEMEN ABSENSI BY MENTOR                         #
-# ============================================================================ #
-
-# =============================== KELAS PESERTA ============================== #
-
-
-
-# ========================= ABSENSI PESERTA BY MENTOR ======================== #
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    except SQLAlchemyError as e:
+        print(f"[insert_absensi_peserta_checkin] Error: {e}")
+        return None

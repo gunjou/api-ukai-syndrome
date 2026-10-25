@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from flask import request, send_file
 from werkzeug.datastructures import FileStorage
@@ -19,7 +19,8 @@ jadwal_ns = Namespace("jadwal", description="Manajemen Jadwal Kelas")
 # ============================================================================ #
 
 jadwal_model = jadwal_ns.model("Jadwal", {
-    "id_paketkelas": fields.Integer(required=True, description="ID paket kelas"),
+    "id_paketkelas": fields.Integer(required=False, description="ID paket kelas (wajib untuk ONLINE, isi salah satu dengan id_kelompok)"),
+    "id_kelompok": fields.Integer(required=False, description="ID kelompok belajar (khusus OFFLINE, isi salah satu dengan id_paketkelas)"),
     "id_mentor": fields.Integer(required=True, description="ID mentor"),
     "topik": fields.String(required=False, description="Topik pertemuan"),
     "catatan": fields.String(required=False, description="Catatan pertemuan"),
@@ -60,6 +61,7 @@ switch_mentor_model = jadwal_ns.model("SwitchMentor", {
 jadwal_parser = jadwal_ns.parser()
 jadwal_parser.add_argument("id_mentor", type=int, required=False, location="args", help="Filter berdasarkan ID mentor")
 jadwal_parser.add_argument("id_paketkelas", type=int, required=False, location="args", help="Filter berdasarkan ID paket kelas")
+jadwal_parser.add_argument("id_kelompok", type=int, required=False, location="args", help="Filter berdasarkan ID kelompok belajar")
 jadwal_parser.add_argument("search", type=str, required=False, location="args", help="Pencarian berdasarkan nama mentor, nama kelas, topik, atau catatan")
 jadwal_parser.add_argument("start_date", type=str, required=False, location="args", help="Tanggal awal periode (YYYY-MM-DD)")
 jadwal_parser.add_argument("end_date", type=str, required=False, location="args", help="Tanggal akhir periode (YYYY-MM-DD)")
@@ -73,6 +75,103 @@ mentor_dropdown_parser.add_argument("id_paketkelas", type=int, required=False, l
 
 bulk_jadwal_parser = reqparse.RequestParser()
 bulk_jadwal_parser.add_argument("file", type=FileStorage, location="files", required=True, help="File jadwal dalam format CSV atau XLSX")
+
+
+jadwal_peserta_parser = jadwal_ns.parser()
+jadwal_peserta_parser.add_argument("start_date", type=str, required=False, location="args", help="Tanggal awal periode (YYYY-MM-DD), default awal bulan ini")
+jadwal_peserta_parser.add_argument("end_date", type=str, required=False, location="args", help="Tanggal akhir periode (YYYY-MM-DD), default akhir bulan ini")
+
+
+
+# ============================================================================ #
+#                           #ANCHOR - HELPER VALIDASI                          #
+# ============================================================================ #
+
+def validate_target_jadwal(type_pertemuan, id_paketkelas, id_kelompok, id_mentor):
+    """
+    Aturan target jadwal:
+    - Wajib tepat satu: id_paketkelas ATAU id_kelompok
+    - ONLINE  -> wajib id_paketkelas
+    - OFFLINE -> id_kelompok (lintas kelas) atau id_paketkelas (satu kelas utuh)
+    Return None jika valid, atau (response, status_code) jika tidak valid.
+    """
+
+    if id_paketkelas is None and id_kelompok is None:
+        return {
+            "status": "error",
+            "message": "Isi salah satu: id_paketkelas atau id_kelompok"
+        }, 400
+
+    if id_paketkelas is not None and id_kelompok is not None:
+        return {
+            "status": "error",
+            "message": "id_paketkelas dan id_kelompok tidak boleh diisi bersamaan"
+        }, 400
+
+    if type_pertemuan == "ONLINE" and id_paketkelas is None:
+        return {
+            "status": "error",
+            "message": "Pertemuan ONLINE wajib menggunakan id_paketkelas"
+        }, 400
+
+    if id_paketkelas is not None:
+        if not is_valid_paketkelas(id_paketkelas):
+            return {"status": "error", "message": "Paket kelas tidak ditemukan"}, 404
+
+        if not is_valid_mentor(id_mentor):
+            return {"status": "error", "message": "Mentor tidak ditemukan"}, 404
+
+        if not is_mentor_of_kelas(id_mentor, id_paketkelas):
+            return {
+                "status": "error",
+                "message": "Mentor tidak terdaftar pada kelas tersebut"
+            }, 400
+
+        return None
+
+    # ==========================================
+    # Target kelompok: mentor cukup aktif,
+    # tidak perlu terdaftar di mentorkelas
+    # ==========================================
+
+    if not is_valid_kelompok(id_kelompok):
+        return {"status": "error", "message": "Kelompok tidak ditemukan"}, 404
+
+    if not is_valid_mentor(id_mentor):
+        return {"status": "error", "message": "Mentor tidak ditemukan"}, 404
+
+    return None
+
+
+def resolve_periode(start_date, end_date):
+    """Default periode = bulan berjalan. Return (start_date, end_date, error)."""
+
+    if not start_date or not end_date:
+        today = datetime.now().date()
+        start_date = today.replace(day=1)
+
+        if today.month == 12:
+            end_date = today.replace(year=today.year + 1, month=1, day=1) - timedelta(days=1)
+        else:
+            end_date = today.replace(month=today.month + 1, day=1) - timedelta(days=1)
+
+    try:
+        start_date = datetime.strptime(str(start_date), "%Y-%m-%d").date()
+        end_date = datetime.strptime(str(end_date), "%Y-%m-%d").date()
+
+    except ValueError:
+        return None, None, ({
+            "status": "error",
+            "message": "Format tanggal harus YYYY-MM-DD"
+        }, 400)
+
+    if start_date > end_date:
+        return None, None, ({
+            "status": "error",
+            "message": "start_date tidak boleh lebih besar dari end_date"
+        }, 400)
+
+    return start_date, end_date, None
 
 
 
@@ -95,7 +194,7 @@ class JadwalListResource(Resource):
             return {"status": "error", "message": "Request body tidak boleh kosong"}, 400
 
         required_fields = [
-            "id_paketkelas", "id_mentor", "tanggal",
+            "id_mentor", "tanggal",
             "waktu_mulai", "waktu_selesai", "type_pertemuan"
         ]
         missing_fields = [field for field in required_fields if data.get(field) is None]
@@ -106,7 +205,8 @@ class JadwalListResource(Resource):
                 "message": f"Field wajib diisi: {', '.join(missing_fields)}"
             }, 400
 
-        id_paketkelas = data["id_paketkelas"]
+        id_paketkelas = data.get("id_paketkelas")
+        id_kelompok = data.get("id_kelompok")
         id_mentor = data["id_mentor"]
         topik = data.get("topik")
         catatan = data.get("catatan")
@@ -128,20 +228,19 @@ class JadwalListResource(Resource):
             }, 400
 
         try:
-            if not is_valid_paketkelas(id_paketkelas):
-                return {"status": "error", "message": "Paket kelas tidak ditemukan"}, 404
+            error = validate_target_jadwal(
+                type_pertemuan,
+                id_paketkelas,
+                id_kelompok,
+                id_mentor
+            )
 
-            if not is_valid_mentor(id_mentor):
-                return {"status": "error", "message": "Mentor tidak ditemukan"}, 404
-
-            if not is_mentor_of_kelas(id_mentor, id_paketkelas):
-                return {
-                    "status": "error",
-                    "message": "Mentor tidak terdaftar pada kelas tersebut"
-                }, 400
+            if error:
+                return error
 
             result = insert_jadwal({
                 "id_paketkelas": id_paketkelas,
+                "id_kelompok": id_kelompok,
                 "id_mentor": id_mentor,
                 "topik": topik,
                 "catatan": catatan,
@@ -241,6 +340,7 @@ class JadwalListResource(Resource):
                 result = get_all_jadwal(
                     id_mentor=id_mentor,
                     id_paketkelas=id_paketkelas,
+                    id_kelompok=args.get("id_kelompok"),
                     search=search,
                     start_date=start_date,
                     end_date=end_date,
@@ -363,6 +463,7 @@ class JadwalGroupListResource(Resource):
                 result = get_all_jadwal(
                     id_mentor=id_mentor,
                     id_paketkelas=id_paketkelas,
+                    id_kelompok=args.get("id_kelompok"),
                     search=search,
                     start_date=start_date,
                     end_date=end_date,
@@ -479,7 +580,7 @@ class JadwalResource(Resource):
             return {"status": "error", "message": "Request body tidak boleh kosong"}, 400
 
         required_fields = [
-            "id_paketkelas", "id_mentor", "tanggal",
+            "id_mentor", "tanggal",
             "waktu_mulai", "waktu_selesai", "type_pertemuan"
         ]
         missing_fields = [field for field in required_fields if data.get(field) is None]
@@ -490,7 +591,8 @@ class JadwalResource(Resource):
                 "message": f"Field wajib diisi: {', '.join(missing_fields)}"
             }, 400
 
-        id_paketkelas = data["id_paketkelas"]
+        id_paketkelas = data.get("id_paketkelas")
+        id_kelompok = data.get("id_kelompok")
         id_mentor = data["id_mentor"]
         topik = data.get("topik")
         catatan = data.get("catatan")
@@ -517,21 +619,39 @@ class JadwalResource(Resource):
             if not existing:
                 return {"status": "error", "message": "Jadwal tidak ditemukan"}, 404
 
-            if not is_valid_paketkelas(id_paketkelas):
-                return {"status": "error", "message": "Paket kelas tidak ditemukan"}, 404
+            error = validate_target_jadwal(
+                type_pertemuan,
+                id_paketkelas,
+                id_kelompok,
+                id_mentor
+            )
 
-            if not is_valid_mentor(id_mentor):
-                return {"status": "error", "message": "Mentor tidak ditemukan"}, 404
+            if error:
+                return error
 
-            if not is_mentor_of_kelas(id_mentor, id_paketkelas):
+            # ==========================================
+            # Target (kelas/kelompok) tidak boleh diganti
+            # jika jadwal sudah memiliki data absensi
+            # ==========================================
+
+            target_berubah = (
+                existing.get("id_paketkelas") != id_paketkelas
+                or existing.get("id_kelompok") != id_kelompok
+            )
+
+            if target_berubah and is_jadwal_has_absensi(id_jadwal):
                 return {
                     "status": "error",
-                    "message": "Mentor tidak terdaftar pada kelas tersebut"
+                    "message": (
+                        "Kelas/kelompok tidak dapat diubah karena "
+                        "jadwal sudah memiliki data absensi"
+                    )
                 }, 400
 
             result = update_jadwal({
                 "id_jadwal": id_jadwal,
                 "id_paketkelas": id_paketkelas,
+                "id_kelompok": id_kelompok,
                 "id_mentor": id_mentor,
                 "topik": topik,
                 "catatan": catatan,
@@ -727,6 +847,62 @@ class JadwalSwitchMentorResource(Resource):
                 "status": "error",
                 "message": "Internal server error"
             }, 500
+
+
+
+# ============================================================================ #
+#                        #ANCHOR - JADWAL MILIK PESERTA                        #
+# ============================================================================ #
+
+@jadwal_ns.route("/peserta")
+class JadwalPesertaResource(Resource):
+
+    @role_required("peserta")
+    @jadwal_ns.expect(jadwal_peserta_parser)
+    def get(self):
+        """
+        Akses: peserta
+
+        Mengambil jadwal milik peserta yang sedang login:
+        - jadwal dari kelas yang diikuti
+        - jadwal dari kelompok belajar yang diikuti (offline)
+
+        Response menyertakan status_absensi_mentor dan status_absensi_saya
+        untuk menentukan kapan tombol check-in ditampilkan.
+        """
+
+        id_user = get_jwt_identity()
+
+        try:
+            args = jadwal_peserta_parser.parse_args()
+
+            start_date, end_date, error = resolve_periode(
+                args.get("start_date"),
+                args.get("end_date")
+            )
+
+            if error:
+                return error
+
+            result = get_all_jadwal_by_peserta(
+                id_peserta=id_user,
+                start_date=start_date,
+                end_date=end_date
+            )
+
+            return {
+                "status": "success",
+                "data": result,
+                "meta": {
+                    "total": len(result),
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat()
+                }
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /jadwal/peserta] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
 
 
 
