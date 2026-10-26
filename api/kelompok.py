@@ -174,7 +174,10 @@ class KelompokListResource(Resource):
             result = insert_kelompok(payload)
 
             if not result:
-                return {"status": "error", "message": "Gagal membuat kelompok"}, 400
+                return {
+                    "status": "error",
+                    "message": "Gagal membuat kelompok"
+                }, 400
 
             return {
                 "status": "success",

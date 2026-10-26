@@ -269,10 +269,10 @@ def insert_kelompok(payload):
                 "now": get_wib()
             }).scalar()
 
-            if not result:
-                return None
+        if not result:
+            return None
 
-            return get_kelompok_by_id(result)
+        return get_kelompok_by_id(result)
 
     except SQLAlchemyError as e:
         print(f"[insert_kelompok] Error: {e}")
@@ -298,10 +298,10 @@ def update_kelompok(payload):
                 "now": get_wib()
             }).scalar()
 
-            if not result:
-                return None
+        if not result:
+            return None
 
-            return get_kelompok_by_id(result)
+        return get_kelompok_by_id(result)
 
     except SQLAlchemyError as e:
         print(f"[update_kelompok] Error: {e}")
