@@ -440,6 +440,74 @@ def update_absensi_mentor_checkout(payload):
         return None
 
 
+def get_absensi_mentor_for_admin_checkout(id_absensi):
+    """
+    Data absensi mentor untuk check-out manual oleh admin.
+    Sengaja tidak memakai serialize_value supaya check_in_at tetap datetime
+    (dipakai untuk validasi waktu di endpoint).
+    """
+
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT
+                    am.id_absensi_mentor, am.id_jadwal, am.id_mentor,
+                    am.check_in_at, am.check_out_at,
+                    COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
+                    COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai) AS waktu_mulai_efektif,
+                    COALESCE(j.waktu_selesai_reschedule, j.waktu_selesai) AS waktu_selesai_efektif
+                FROM absensi_mentor am
+                INNER JOIN jadwal_kelas j
+                    ON j.id_jadwal = am.id_jadwal
+                   AND j.status = 1
+                WHERE am.id_absensi_mentor = :id_absensi
+                  AND am.status = 1
+            """), {
+                "id_absensi": id_absensi
+            }).mappings().fetchone()
+
+            return dict(result) if result else None
+
+    except SQLAlchemyError as e:
+        print(f"[get_absensi_mentor_for_admin_checkout] Error: {e}")
+        return None
+
+
+def update_absensi_mentor_checkout_by_admin(id_absensi, check_out_at):
+    engine = get_connection()
+
+    try:
+        with engine.begin() as conn:
+
+            # check_out_at IS NULL -> mencegah menimpa check-out yang
+            # sudah dilakukan mentor sendiri (race condition)
+            result = conn.execute(text("""
+                UPDATE absensi_mentor
+                SET
+                    check_out_at = :check_out_at,
+                    updated_at = :now
+                WHERE id_absensi_mentor = :id_absensi
+                  AND status = 1
+                  AND check_in_at IS NOT NULL
+                  AND check_out_at IS NULL
+                RETURNING id_absensi_mentor
+            """), {
+                "id_absensi": id_absensi,
+                "check_out_at": check_out_at,
+                "now": get_wib()
+            }).scalar()
+
+            if not result:
+                return None
+
+            return get_absensi_mentor_by_id(result)
+
+    except SQLAlchemyError as e:
+        print(f"[update_absensi_mentor_checkout_by_admin] Error: {e}")
+        return None
+
 
 # ============================================================================ #
 #                   #ANCHOR - ABSENSI PESERTA (LIST & DETAIL)                  #

@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 
 import requests
@@ -35,6 +36,18 @@ absensi_peserta_update_model = absensi_ns.model(
             required=True,
             description="Status kehadiran peserta",
             enum=["HADIR", "IZIN", "SAKIT", "ALPHA"])
+    }
+)
+
+
+admin_checkout_mentor_model = absensi_ns.model(
+    "AdminCheckoutMentor",
+    {
+        "waktu_check_out": fields.String(
+            required=True,
+            description="Jam check-out format HH:MM (tanggal mengikuti tanggal check-in)",
+            example="22:00"
+        )
     }
 )
 
@@ -547,6 +560,104 @@ class AbsensiMentorCheckOutResource(Resource):
             print(f"[POST /absensi/mentor/check-out] CDN Error: {e}")
             return {"status": "error", "message": "Gagal menghubungi CDN"}, 500
 
+
+@absensi_ns.route("/mentor/<int:id_absensi>/check-out")
+class AbsensiMentorAdminCheckOutResource(Resource):
+
+    @role_required("admin")
+    @absensi_ns.expect(admin_checkout_mentor_model)
+    def patch(self, id_absensi):
+        """
+        Akses: admin
+
+        Check-out absensi mentor secara manual (mentor lupa check-out).
+
+        - Tanggal check-out mengikuti tanggal check-in
+        - Jam check-out harus setelah jam check-in dan tidak boleh melebihi waktu sekarang
+        - Hanya untuk absensi yang sudah check-in dan belum check-out
+        """
+
+        data = request.get_json()
+
+        if not data:
+            return {"status": "error", "message": "Request body tidak boleh kosong"}, 400
+
+        waktu_check_out = str(data.get("waktu_check_out") or "").strip()
+
+        if not waktu_check_out:
+            return {"status": "error", "message": "waktu_check_out wajib diisi"}, 400
+
+        jam_check_out = None
+
+        for fmt in ("%H:%M", "%H:%M:%S"):
+            try:
+                jam_check_out = datetime.strptime(waktu_check_out, fmt).time()
+                break
+            except ValueError:
+                continue
+
+        if jam_check_out is None:
+            return {
+                "status": "error",
+                "message": "Format waktu_check_out harus HH:MM, contoh 22:00"
+            }, 400
+
+        try:
+            absensi = get_absensi_mentor_for_admin_checkout(id_absensi)
+
+            if not absensi:
+                return {"status": "error", "message": "Absensi mentor tidak ditemukan"}, 404
+
+            if not absensi["check_in_at"]:
+                return {"status": "error", "message": "Mentor belum melakukan check-in"}, 400
+
+            if absensi["check_out_at"]:
+                return {
+                    "status": "error",
+                    "message": "Mentor sudah melakukan check-out",
+                    "data": {
+                        "check_out_at": absensi["check_out_at"].strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                }, 409
+
+            check_in_at = absensi["check_in_at"]
+            check_out_at = datetime.combine(check_in_at.date(), jam_check_out)
+
+            if check_out_at <= check_in_at:
+                return {
+                    "status": "error",
+                    "message": "Waktu check-out harus setelah waktu check-in",
+                    "data": {
+                        "check_in_at": check_in_at.strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                }, 400
+
+            if check_out_at > get_wib().replace(tzinfo=None):
+                return {
+                    "status": "error",
+                    "message": "Waktu check-out tidak boleh melebihi waktu sekarang"
+                }, 400
+
+            result = update_absensi_mentor_checkout_by_admin(id_absensi, check_out_at)
+
+            if not result:
+                return {
+                    "status": "error",
+                    "message": "Gagal melakukan check-out, data absensi mungkin sudah berubah"
+                }, 409
+
+            return {
+                "status": "success",
+                "message": "Check-out mentor berhasil dilakukan oleh admin",
+                "data": {
+                    **result,
+                    "durasi_menit": int((check_out_at - check_in_at).total_seconds() // 60)
+                }
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[PATCH /absensi/mentor/{id_absensi}/check-out] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
 
 
 # ============================================================================ #
