@@ -4,7 +4,7 @@ from flask_restx import Namespace, Resource, fields
 from email_validator import validate_email, EmailNotValidError
 from sqlalchemy.exc import SQLAlchemyError
 
-from .utils.decorator import session_required
+from .utils.decorator import session_required, role_required
 from .query.q_profile import *
 
 profile_ns = Namespace('profile', description='Manajement profil pengguna')
@@ -99,3 +99,33 @@ class GetUserResource(Resource):
         except SQLAlchemyError as e:
             profile_ns.logger.error(f"Database error: {str(e)}")
             return {"status": "Internal server error"}, 500
+
+
+# ============================================================================ #
+#                          #ANCHOR - CEK WALI KELAS                            #
+# ============================================================================ #
+
+@profile_ns.route("/wali-kelas")
+class ProfileWaliKelasResource(Resource):
+
+    @role_required("mentor")
+    def get(self):
+        """Akses: mentor, Cek apakah mentor yang sedang login merupakan wali kelas beserta daftar kelasnya"""
+
+        id_mentor = get_jwt_identity()
+
+        try:
+            kelas = get_kelas_wali_kelas(id_mentor)
+
+            return {
+                "status": "success",
+                "data": {
+                    "is_wali_kelas": len(kelas) > 0,
+                    "total_kelas": len(kelas),
+                    "kelas": kelas
+                }
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /profile/wali-kelas] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500

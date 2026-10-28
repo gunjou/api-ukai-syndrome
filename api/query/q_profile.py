@@ -157,3 +157,32 @@ def ambil_kelas_saya(id_user, role):
     except SQLAlchemyError as e:
         print(f"[ambil_kelas_saya] Error: {str(e)}")
         return {"msg": "Internal server error"}
+
+
+# ============================================================================ #
+#                          #ANCHOR - CEK WALI KELAS                            #
+# ============================================================================ #
+
+def get_kelas_wali_kelas(id_mentor):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT pk.id_paketkelas, pk.nama_kelas
+                FROM paketkelas pk
+                INNER JOIN batch b
+                    ON b.id_batch = pk.id_batch
+                   AND b.status = 1
+                WHERE pk.id_user = :id_mentor
+                  AND pk.status = 1
+                ORDER BY pk.nama_kelas ASC
+            """), {
+                "id_mentor": id_mentor
+            }).mappings().fetchall()
+
+            return [dict(row) for row in result]
+
+    except SQLAlchemyError as e:
+        print(f"[get_kelas_wali_kelas] Error: {e}")
+        raise

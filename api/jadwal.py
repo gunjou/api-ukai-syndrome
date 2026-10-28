@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+import calendar
+from datetime import date, datetime, timedelta
 
 from flask import request, send_file
 from werkzeug.datastructures import FileStorage
@@ -6,6 +7,7 @@ from flask_jwt_extended import get_jwt_identity, get_jwt
 from flask_restx import Namespace, Resource, fields, reqparse
 from sqlalchemy.exc import SQLAlchemyError
 
+from .utils.config import get_wib
 from .utils.decorator import role_required
 from .query.q_jadwal import *
 from .query.q_jadwal_bulk import *
@@ -81,6 +83,13 @@ jadwal_peserta_parser = jadwal_ns.parser()
 jadwal_peserta_parser.add_argument("start_date", type=str, required=False, location="args", help="Tanggal awal periode (YYYY-MM-DD), default awal bulan ini")
 jadwal_peserta_parser.add_argument("end_date", type=str, required=False, location="args", help="Tanggal akhir periode (YYYY-MM-DD), default akhir bulan ini")
 
+
+jadwal_wali_kelas_parser = jadwal_ns.parser()
+jadwal_wali_kelas_parser.add_argument("bulan", type=str, required=False, location="args", help="Filter bulanan (YYYY-MM), default bulan berjalan")
+jadwal_wali_kelas_parser.add_argument("start_date", type=str, required=False, location="args", help="Tanggal awal range (YYYY-MM-DD), wajib berpasangan dengan end_date. Jika diisi, filter bulan diabaikan")
+jadwal_wali_kelas_parser.add_argument("end_date", type=str, required=False, location="args", help="Tanggal akhir range (YYYY-MM-DD), wajib berpasangan dengan start_date")
+jadwal_wali_kelas_parser.add_argument("id_paketkelas", type=int, required=False, location="args", help="Filter kelas (harus kelas yang Anda walikan)")
+jadwal_wali_kelas_parser.add_argument("search", type=str, required=False, location="args", help="Pencarian nama mentor, nama kelas, topik, atau catatan")
 
 
 # ============================================================================ #
@@ -172,6 +181,70 @@ def resolve_periode(start_date, end_date):
         }, 400)
 
     return start_date, end_date, None
+
+
+def resolve_periode_wali_kelas(bulan, start_date, end_date):
+    """
+    Prioritas filter:
+    1. start_date + end_date (range tanggal)
+    2. bulan (YYYY-MM) -> tanggal 1 s/d akhir bulan
+    3. default bulan berjalan
+    Return (periode, error).
+    """
+
+    if start_date or end_date:
+        if not start_date or not end_date:
+            return None, ({
+                "status": "error",
+                "message": "start_date dan end_date wajib diisi bersamaan"
+            }, 400)
+
+        try:
+            start_date = datetime.strptime(str(start_date).strip(), "%Y-%m-%d").date()
+            end_date = datetime.strptime(str(end_date).strip(), "%Y-%m-%d").date()
+
+        except ValueError:
+            return None, ({
+                "status": "error",
+                "message": "Format tanggal harus YYYY-MM-DD"
+            }, 400)
+
+        if start_date > end_date:
+            return None, ({
+                "status": "error",
+                "message": "start_date tidak boleh lebih besar dari end_date"
+            }, 400)
+
+        return {
+            "filter": "RANGE",
+            "bulan": None,
+            "start_date": start_date,
+            "end_date": end_date
+        }, None
+
+    if bulan and str(bulan).strip():
+        try:
+            parsed = datetime.strptime(str(bulan).strip(), "%Y-%m")
+        except ValueError:
+            return None, ({
+                "status": "error",
+                "message": "Format bulan harus YYYY-MM, contoh 2026-10"
+            }, 400)
+
+        tahun, nomor_bulan = parsed.year, parsed.month
+
+    else:
+        today = get_wib().date()
+        tahun, nomor_bulan = today.year, today.month
+
+    last_day = calendar.monthrange(tahun, nomor_bulan)[1]
+
+    return {
+        "filter": "BULAN",
+        "bulan": f"{tahun:04d}-{nomor_bulan:02d}",
+        "start_date": date(tahun, nomor_bulan, 1),
+        "end_date": date(tahun, nomor_bulan, last_day)
+    }, None
 
 
 
@@ -904,6 +977,72 @@ class JadwalPesertaResource(Resource):
             print(f"[GET /jadwal/peserta] Error: {e}")
             return {"status": "error", "message": "Internal server error"}, 500
 
+
+@jadwal_ns.route("/wali-kelas")
+class JadwalWaliKelasResource(Resource):
+
+    @role_required("mentor")
+    @jadwal_ns.expect(jadwal_wali_kelas_parser)
+    def get(self):
+        """
+        Akses: mentor (wali kelas)
+
+        Mengambil jadwal seluruh kelas yang diwalikan oleh mentor yang sedang login.
+
+        Filter:
+        - default: bulan berjalan (tanggal 1 s/d akhir bulan)
+        - bulan=YYYY-MM
+        - start_date & end_date (YYYY-MM-DD), mengabaikan filter bulan
+        - id_paketkelas: hanya kelas yang diwalikan
+        """
+
+        id_user = get_jwt_identity()
+
+        try:
+            args = jadwal_wali_kelas_parser.parse_args()
+            id_paketkelas = args.get("id_paketkelas")
+
+            periode, error = resolve_periode_wali_kelas(
+                args.get("bulan"),
+                args.get("start_date"),
+                args.get("end_date")
+            )
+
+            if error:
+                return error
+
+            if id_paketkelas is not None and not is_wali_kelas(id_user, id_paketkelas):
+                return {
+                    "status": "error",
+                    "message": "Kelas tidak ditemukan atau Anda bukan wali kelas tersebut"
+                }, 404
+
+            result = get_all_jadwal_by_wali_kelas(
+                id_wali_kelas=id_user,
+                start_date=periode["start_date"],
+                end_date=periode["end_date"],
+                id_paketkelas=id_paketkelas,
+                search=args.get("search")
+            )
+
+            return {
+                "status": "success",
+                "data": result["data"],
+                "meta": {
+                    "filter": periode["filter"],
+                    "bulan": periode["bulan"],
+                    "start_date": periode["start_date"].isoformat(),
+                    "end_date": periode["end_date"].isoformat(),
+                    "id_paketkelas": id_paketkelas,
+                    "total": len(result["data"]),
+                    "total_kelas": result["total_kelas"],
+                    "per_tanggal": result["per_tanggal"]
+                }
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /jadwal/wali-kelas] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
 
 
 # ============================================================================ #

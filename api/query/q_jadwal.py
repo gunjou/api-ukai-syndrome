@@ -64,6 +64,25 @@ def is_mentor_of_kelas(id_mentor, id_paketkelas):
         return False
 
 
+def is_wali_kelas(id_mentor, id_paketkelas):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT 1 FROM paketkelas WHERE id_paketkelas = :id_paketkelas AND id_user = :id_mentor AND status = 1
+            """), {
+                "id_paketkelas": id_paketkelas,
+                "id_mentor": id_mentor
+            }).fetchone()
+
+            return bool(result)
+
+    except SQLAlchemyError as e:
+        print(f"[is_wali_kelas] Error: {e}")
+        return False
+
+
 def is_valid_kelompok(id_kelompok):
     engine = get_connection()
 
@@ -1241,4 +1260,135 @@ def get_all_jadwal_by_peserta(id_peserta, start_date=None, end_date=None):
 
     except SQLAlchemyError as e:
         print(f"[get_all_jadwal_by_peserta] Error: {e}")
+        raise
+
+
+# ============================================================================ #
+#                        MANAJEMEN JADWAL BY - WALI KELAS                      #
+# ============================================================================ #
+
+def get_all_jadwal_by_wali_kelas(
+    id_wali_kelas,
+    start_date,
+    end_date,
+    id_paketkelas=None,
+    search=None
+):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+
+            # ==========================================
+            # Hanya jadwal dari kelas yang wali kelasnya
+            # adalah mentor yang sedang login
+            # ==========================================
+
+            where_clause = """
+                WHERE pk.id_user = :id_wali_kelas
+                  AND j.status = 1
+                  AND COALESCE(j.tanggal_reschedule, j.tanggal) BETWEEN :start_date AND :end_date
+            """
+
+            params = {
+                "id_wali_kelas": id_wali_kelas,
+                "start_date": start_date,
+                "end_date": end_date
+            }
+
+            if id_paketkelas is not None:
+                where_clause += " AND j.id_paketkelas = :id_paketkelas"
+                params["id_paketkelas"] = id_paketkelas
+
+            if search and search.strip():
+                where_clause += """
+                    AND (
+                        u.nama ILIKE :search
+                        OR u.nickname ILIKE :search
+                        OR pk.nama_kelas ILIKE :search
+                        OR j.topik ILIKE :search
+                        OR j.catatan ILIKE :search
+                    )
+                """
+                params["search"] = f"%{search.strip()}%"
+
+            result = conn.execute(
+                text(f"""
+                    SELECT
+                        j.id_jadwal, j.id_paketkelas, pk.nama_kelas,
+                        j.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor,
+                        j.topik, j.catatan, j.tanggal, j.waktu_mulai, j.waktu_selesai,
+                        j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
+
+                        COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
+                        COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai) AS waktu_mulai_efektif,
+                        COALESCE(j.waktu_selesai_reschedule, j.waktu_selesai) AS waktu_selesai_efektif,
+
+                        j.type_pertemuan,
+
+                        CASE
+                            WHEN am.id_absensi_mentor IS NULL THEN 'BELUM_CHECK_IN'
+                            WHEN am.check_out_at IS NULL THEN 'CHECK_IN'
+                            ELSE 'SELESAI'
+                        END AS status_absensi_mentor,
+
+                        j.status, j.created_by, j.created_at, j.updated_by, j.updated_at
+
+                    FROM jadwal_kelas j
+                    INNER JOIN paketkelas pk
+                        ON pk.id_paketkelas = j.id_paketkelas
+                       AND pk.status = 1
+                    LEFT JOIN users u
+                        ON u.id_user = j.id_mentor
+                    LEFT JOIN absensi_mentor am
+                        ON am.id_jadwal = j.id_jadwal
+                       AND am.status = 1
+                    {where_clause}
+                    ORDER BY
+                        COALESCE(j.tanggal_reschedule, j.tanggal) ASC,
+                        COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai) ASC,
+                        pk.nama_kelas ASC,
+                        j.id_jadwal ASC
+                """),
+                params
+            ).mappings().fetchall()
+
+            data = [serialize_value(row) for row in result]
+
+            # ==========================================
+            # META: jumlah jadwal & kelas per tanggal
+            # ==========================================
+
+            per_tanggal = {}
+
+            for item in data:
+                tanggal = item["tanggal_efektif"]
+
+                if tanggal not in per_tanggal:
+                    per_tanggal[tanggal] = {
+                        "tanggal": tanggal,
+                        "total_jadwal": 0,
+                        "kelas": set()
+                    }
+
+                per_tanggal[tanggal]["total_jadwal"] += 1
+                per_tanggal[tanggal]["kelas"].add(item["id_paketkelas"])
+
+            meta_per_tanggal = [
+                {
+                    "tanggal": value["tanggal"],
+                    "total_jadwal": value["total_jadwal"],
+                    "total_kelas": len(value["kelas"])
+                }
+                for value in per_tanggal.values()
+            ]
+
+            return {
+                "data": data,
+                "per_tanggal": meta_per_tanggal,
+                "total_kelas": len({item["id_paketkelas"] for item in data})
+            }
+
+    except SQLAlchemyError as e:
+        print(f"[get_all_jadwal_by_wali_kelas] Error: {e}")
         raise
