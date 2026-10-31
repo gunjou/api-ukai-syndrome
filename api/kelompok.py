@@ -485,8 +485,8 @@ class KelompokBulkImportResource(Resource):
 
         Import anggota kelompok via file CSV/XLSX.
 
-        - Kolom: nama_kelompok (wajib), email dan/atau nama peserta
-        - Peserta dicocokkan dengan email (utama) atau nama (jika unik)
+        - Kolom: nama_kelompok (wajib), email (wajib)
+        - Peserta dicocokkan berdasarkan email
         - Pencocokan tidak membedakan huruf besar/kecil & spasi berlebih
         - Jika ada satu baris error -> tidak ada data yang disimpan
         - dry_run=true -> hanya validasi & preview

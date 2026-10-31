@@ -660,7 +660,7 @@ def delete_kelompok_peserta(id_kelompok_peserta):
 BULK_ALLOWED_EXTENSIONS = {".csv", ".xlsx"}
 BULK_MAX_FILE_SIZE = 2 * 1024 * 1024  # 2 MB
 BULK_MAX_ROWS = 1000
-BULK_TEMPLATE_HEADERS = ["nama_kelompok", "email", "nama"]
+BULK_TEMPLATE_HEADERS = ["nama_kelompok", "email"]
 
 # Header file dinormalisasi dulu (lihat normalize_header), lalu dipetakan ke kolom baku
 BULK_HEADER_ALIASES = {
@@ -668,8 +668,7 @@ BULK_HEADER_ALIASES = {
     "kelompok": "nama_kelompok",
     "email": "email",
     "e_mail": "email",
-    "nama": "nama",
-    "nama_peserta": "nama"
+    "email_peserta": "email"
 }
 
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -792,11 +791,8 @@ def import_bulk_kelompok(file, filename, id_batch, dry_run=False):
     if "nama_kelompok" not in column_map:
         return {"status": "FILE_INVALID", "message": "Kolom nama_kelompok wajib ada"}
 
-    if "email" not in column_map and "nama" not in column_map:
-        return {
-            "status": "FILE_INVALID",
-            "message": "Minimal salah satu kolom email atau nama wajib ada"
-        }
+    if "email" not in column_map:
+        return {"status": "FILE_INVALID", "message": "Kolom email wajib ada"}
 
     # ------------------------------------------------------------------ #
     # 3. AMBIL BARIS (header = baris 1, data mulai baris 2)
@@ -808,11 +804,10 @@ def import_bulk_kelompok(file, filename, id_batch, dry_run=False):
         row = {
             "row": index + 2,
             "nama_kelompok": normalize_text(record.get(column_map["nama_kelompok"])),
-            "email": normalize_text(record.get(column_map["email"])) if "email" in column_map else "",
-            "nama": normalize_text(record.get(column_map["nama"])) if "nama" in column_map else ""
+            "email": normalize_text(record.get(column_map["email"]))
         }
 
-        if not (row["nama_kelompok"] or row["email"] or row["nama"]):
+        if not (row["nama_kelompok"] or row["email"]):
             continue
 
         rows.append(row)
@@ -883,19 +878,14 @@ def import_bulk_kelompok(file, filename, id_batch, dry_run=False):
 
             peserta_by_id = {}
             email_map = {}
-            nama_map = {}
 
             for row in peserta_rows:
                 peserta_by_id[row["id_user"]] = dict(row)
 
                 email_key = normalize_key(row["email"])
-                nama_key = normalize_key(row["nama"])
 
                 if email_key:
                     email_map.setdefault(email_key, []).append(row["id_user"])
-
-                if nama_key:
-                    nama_map.setdefault(nama_key, []).append(row["id_user"])
 
             # ==========================================
             # Keanggotaan kelompok aktif di batch
@@ -934,7 +924,6 @@ def import_bulk_kelompok(file, filename, id_batch, dry_run=False):
                 skip_message = None
 
                 email_key = normalize_key(row["email"])
-                nama_key = normalize_key(row["nama"])
 
                 # --- kelompok ---
                 if not row["nama_kelompok"]:
@@ -948,46 +937,23 @@ def import_bulk_kelompok(file, filename, id_batch, dry_run=False):
                         )
 
                 # --- peserta ---
-                if not email_key and not nama_key:
-                    messages.append("Email atau nama peserta wajib diisi")
+                if not email_key:
+                    messages.append("Email peserta wajib diisi")
 
-                elif email_key:
-                    if not EMAIL_REGEX.match(row["email"]):
-                        messages.append(f"Format email '{row['email']}' tidak valid")
-                    else:
-                        matches = email_map.get(email_key, [])
-
-                        if not matches:
-                            messages.append(
-                                f"Peserta dengan email '{row['email']}' tidak ditemukan "
-                                "pada kelas di batch ini"
-                            )
-                        elif len(matches) > 1:
-                            messages.append(
-                                f"Email '{row['email']}' terdaftar pada lebih dari satu peserta"
-                            )
-                        else:
-                            id_peserta = matches[0]
-
-                            if nama_key and id_peserta not in nama_map.get(nama_key, []):
-                                messages.append(
-                                    f"Nama '{row['nama']}' tidak sesuai dengan "
-                                    f"pemilik email '{row['email']}'"
-                                )
-                                id_peserta = None
+                elif not EMAIL_REGEX.match(row["email"]):
+                    messages.append(f"Format email '{row['email']}' tidak valid")
 
                 else:
-                    matches = nama_map.get(nama_key, [])
+                    matches = email_map.get(email_key, [])
 
                     if not matches:
                         messages.append(
-                            f"Peserta dengan nama '{row['nama']}' tidak ditemukan "
+                            f"Peserta dengan email '{row['email']}' tidak ditemukan "
                             "pada kelas di batch ini"
                         )
                     elif len(matches) > 1:
                         messages.append(
-                            f"Nama '{row['nama']}' cocok dengan {len(matches)} peserta, "
-                            "gunakan email"
+                            f"Email '{row['email']}' terdaftar pada lebih dari satu peserta"
                         )
                     else:
                         id_peserta = matches[0]
@@ -1117,8 +1083,8 @@ def build_template_kelompok(id_batch=None, file_format="xlsx"):
     )
 
     contoh_rows = [
-        [contoh_kelompok, "peserta1@email.com", "Nama Peserta Satu"],
-        [contoh_kelompok, "", "Nama Peserta Dua"]
+        [contoh_kelompok, "peserta1@email.com"],
+        [contoh_kelompok, "peserta2@email.com"]
     ]
 
     # ------------------------------------------------------------------ #
@@ -1159,7 +1125,6 @@ def build_template_kelompok(id_batch=None, file_format="xlsx"):
 
     ws.column_dimensions["A"].width = 30
     ws.column_dimensions["B"].width = 35
-    ws.column_dimensions["C"].width = 35
     ws.freeze_panes = "A2"
 
     # Sheet 2: Daftar Kelompok + dropdown (jika id_batch dikirim)
@@ -1196,15 +1161,12 @@ def build_template_kelompok(id_batch=None, file_format="xlsx"):
         "",
         "1. Isi data pada sheet 'Import'. Jangan mengubah nama kolom pada baris pertama.",
         "2. nama_kelompok wajib diisi dan harus sama dengan kelompok yang sudah terdaftar pada batch.",
-        "3. Isi email peserta (disarankan). Kolom nama hanya dipakai jika email kosong.",
-        "4. Jika hanya mengisi nama, nama harus unik pada batch. Jika ada nama yang sama, wajib gunakan email.",
-        "5. Jika email dan nama diisi bersamaan, keduanya harus milik peserta yang sama.",
-        "6. Peserta harus terdaftar di kelas pada batch tersebut.",
-        "7. Satu peserta hanya boleh muncul satu kali dan hanya boleh berada di satu kelompok per batch.",
-        "8. Peserta yang sudah terdaftar di kelompok yang sama akan dilewati (tidak dianggap error).",
-        "9. Huruf besar/kecil dan spasi berlebih tidak berpengaruh pada pencocokan.",
-        f"10. Maksimal {BULK_MAX_ROWS} baris per file. Jika ada satu baris error, tidak ada data yang disimpan.",
-        "11. Hapus baris contoh sebelum mengunggah file."
+        "3. email wajib diisi dan harus milik peserta yang terdaftar di kelas pada batch tersebut.",
+        "4. Satu peserta hanya boleh muncul satu kali dan hanya boleh berada di satu kelompok per batch.",
+        "5. Peserta yang sudah terdaftar di kelompok yang sama akan dilewati (tidak dianggap error).",
+        "6. Huruf besar/kecil dan spasi berlebih tidak berpengaruh pada pencocokan.",
+        f"7. Maksimal {BULK_MAX_ROWS} baris per file. Jika ada satu baris error, tidak ada data yang disimpan.",
+        "8. Hapus baris contoh sebelum mengunggah file."
     ]
 
     for line in petunjuk:
