@@ -215,7 +215,8 @@ def get_all_jadwal(
     start_date=None,
     end_date=None,
     page=1,
-    per_page=50
+    per_page=50,
+    type_pertemuan=None
 ):
     engine = get_connection()
 
@@ -247,6 +248,10 @@ def get_all_jadwal(
             if id_kelompok is not None:
                 where_clause += " AND j.id_kelompok = :id_kelompok"
                 params["id_kelompok"] = id_kelompok
+
+            if type_pertemuan:
+                where_clause += " AND j.type_pertemuan = :type_pertemuan"
+                params["type_pertemuan"] = type_pertemuan
 
             if search and search.strip():
                 where_clause += """
@@ -543,7 +548,8 @@ def get_all_jadwal_by_mentor(
     id_mentor,
     search=None,
     start_date=None,
-    end_date=None
+    end_date=None,
+    type_pertemuan=None
 ):
     engine = get_connection()
 
@@ -576,6 +582,10 @@ def get_all_jadwal_by_mentor(
                     ) <= :end_date
                 """
                 params["end_date"] = end_date
+
+            if type_pertemuan:
+                where_clause += " AND j.type_pertemuan = :type_pertemuan"
+                params["type_pertemuan"] = type_pertemuan
 
             if search and search.strip():
                 where_clause += """
@@ -758,7 +768,8 @@ def get_group_all_jadwal_by_mentor(
     id_mentor,
     search=None,
     start_date=None,
-    end_date=None
+    end_date=None,
+    type_pertemuan=None
 ):
     engine = get_connection()
 
@@ -791,6 +802,10 @@ def get_group_all_jadwal_by_mentor(
                     ) <= :end_date
                 """
                 params["end_date"] = end_date
+
+            if type_pertemuan:
+                where_clause += " AND j.type_pertemuan = :type_pertemuan"
+                params["type_pertemuan"] = type_pertemuan
 
             if search and search.strip():
                 where_clause += """

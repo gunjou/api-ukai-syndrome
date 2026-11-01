@@ -64,6 +64,7 @@ jadwal_parser = jadwal_ns.parser()
 jadwal_parser.add_argument("id_mentor", type=int, required=False, location="args", help="Filter berdasarkan ID mentor")
 jadwal_parser.add_argument("id_paketkelas", type=int, required=False, location="args", help="Filter berdasarkan ID paket kelas")
 jadwal_parser.add_argument("id_kelompok", type=int, required=False, location="args", help="Filter berdasarkan ID kelompok belajar")
+jadwal_parser.add_argument("type_pertemuan", type=str, required=False, location="args", help="Filter tipe pertemuan: ONLINE / OFFLINE")
 jadwal_parser.add_argument("search", type=str, required=False, location="args", help="Pencarian berdasarkan nama mentor, nama kelas, topik, atau catatan")
 jadwal_parser.add_argument("start_date", type=str, required=False, location="args", help="Tanggal awal periode (YYYY-MM-DD)")
 jadwal_parser.add_argument("end_date", type=str, required=False, location="args", help="Tanggal akhir periode (YYYY-MM-DD)")
@@ -150,6 +151,16 @@ def validate_target_jadwal(type_pertemuan, id_paketkelas, id_kelompok, id_mentor
         return {"status": "error", "message": "Mentor tidak ditemukan"}, 404
 
     return None
+
+
+def parse_type_pertemuan(value):
+    """Return (type_pertemuan, error). Kosong = tanpa filter."""
+    if not value or not value.strip():
+        return None, None
+    value = value.strip().upper()
+    if value not in ("ONLINE", "OFFLINE"):
+        return None, ({"status": "error", "message": "Parameter type_pertemuan harus ONLINE atau OFFLINE"}, 400)
+    return value, None
 
 
 def resolve_periode(start_date, end_date):
@@ -351,6 +362,10 @@ class JadwalListResource(Resource):
             args = jadwal_parser.parse_args()
             search = args.get("search")
 
+            type_pertemuan, err = parse_type_pertemuan(args.get("type_pertemuan"))
+            if err:
+                return err
+
             if role == "admin":
                 id_mentor = args.get("id_mentor")
                 id_paketkelas = args.get("id_paketkelas")
@@ -411,6 +426,7 @@ class JadwalListResource(Resource):
                     }, 400
 
                 result = get_all_jadwal(
+                    type_pertemuan=type_pertemuan,
                     id_mentor=id_mentor,
                     id_paketkelas=id_paketkelas,
                     id_kelompok=args.get("id_kelompok"),
@@ -439,6 +455,7 @@ class JadwalListResource(Resource):
             # ==========================================
 
             result = get_all_jadwal_by_mentor(
+                type_pertemuan=type_pertemuan,
                 id_mentor=id_user,
                 search=search
             )
@@ -474,6 +491,10 @@ class JadwalGroupListResource(Resource):
             args = jadwal_parser.parse_args()
             search = args.get("search")
 
+            type_pertemuan, err = parse_type_pertemuan(args.get("type_pertemuan"))
+            if err:
+                return err
+
             if role == "admin":
                 id_mentor = args.get("id_mentor")
                 id_paketkelas = args.get("id_paketkelas")
@@ -534,6 +555,7 @@ class JadwalGroupListResource(Resource):
                     }, 400
 
                 result = get_all_jadwal(
+                    type_pertemuan=type_pertemuan,
                     id_mentor=id_mentor,
                     id_paketkelas=id_paketkelas,
                     id_kelompok=args.get("id_kelompok"),
@@ -562,6 +584,7 @@ class JadwalGroupListResource(Resource):
             # ==========================================
 
             result = get_group_all_jadwal_by_mentor(
+                type_pertemuan=type_pertemuan,
                 id_mentor=id_user,
                 search=search
             )
@@ -1620,3 +1643,334 @@ class JadwalBulkRollbackResource(Resource):
                 "status": "error",
                 "message": "Gagal melakukan rollback"
             }, 500
+
+
+# ============================================================================ #
+#                     #ANCHOR - TUKAR JADWAL ANTAR MENTOR                      #
+# ============================================================================ #
+
+from .query import q_jadwal_tukar as qt
+
+
+tukar_request_model = jadwal_ns.model("TukarJadwalRequest", {
+    "id_jadwal_asal": fields.Integer(required=True, description="Salah satu ID jadwal dari grup milik Anda"),
+    "id_jadwal_tujuan": fields.Integer(required=True, description="Salah satu ID jadwal dari grup milik mentor tujuan"),
+    "alasan": fields.String(required=False, description="Alasan pengajuan (maks. 500 karakter)")
+})
+
+tukar_respon_model = jadwal_ns.model("TukarJadwalRespon", {
+    "catatan_respon": fields.String(required=False, description="Catatan untuk pengaju (maks. 500 karakter)")
+})
+
+
+tukar_kandidat_parser = jadwal_ns.parser()
+tukar_kandidat_parser.add_argument("id_jadwal", type=int, required=True, location="args", help="Salah satu ID jadwal dari grup milik Anda")
+tukar_kandidat_parser.add_argument("tanggal", type=str, required=False, location="args", help="Filter tanggal grup kandidat (YYYY-MM-DD). Default: hari ini s.d. 14 hari ke depan")
+tukar_kandidat_parser.add_argument("id_mentor", type=int, required=False, location="args", help="Filter kandidat milik mentor tertentu")
+tukar_kandidat_parser.add_argument("search", type=str, required=False, location="args", help="Cari nama mentor, kelas, atau kelompok")
+
+tukar_list_parser = jadwal_ns.parser()
+tukar_list_parser.add_argument("tipe", type=str, required=False, default="semua", location="args", help="masuk / keluar / semua (khusus mentor)")
+tukar_list_parser.add_argument("status", type=str, required=False, location="args", help="PENDING / DITERIMA / DITOLAK / DIBATALKAN / KADALUARSA")
+tukar_list_parser.add_argument("id_mentor", type=int, required=False, location="args", help="Khusus admin: filter mentor pengaju/tujuan")
+tukar_list_parser.add_argument("page", type=int, required=False, default=1, location="args", help="Halaman")
+tukar_list_parser.add_argument("per_page", type=int, required=False, default=20, location="args", help="Jumlah data per halaman, maksimum 100")
+
+tukar_log_parser = jadwal_ns.parser()
+tukar_log_parser.add_argument("id_request", type=int, required=False, location="args", help="Log untuk satu request")
+tukar_log_parser.add_argument("id_mentor", type=int, required=False, location="args", help="Request yang melibatkan mentor ini")
+tukar_log_parser.add_argument("aksi", type=str, required=False, location="args", help="DIAJUKAN / DITERIMA / DITOLAK / DIBATALKAN / KADALUARSA")
+tukar_log_parser.add_argument("start_date", type=str, required=False, location="args", help="Tanggal awal (YYYY-MM-DD)")
+tukar_log_parser.add_argument("end_date", type=str, required=False, location="args", help="Tanggal akhir (YYYY-MM-DD)")
+tukar_log_parser.add_argument("page", type=int, required=False, default=1, location="args", help="Halaman")
+tukar_log_parser.add_argument("per_page", type=int, required=False, default=20, location="args", help="Jumlah data per halaman, maksimum 100")
+
+
+TUKAR_AKSI = ("DIAJUKAN",) + qt.STATUS_TUKAR[1:]
+
+
+def _tukar_error(message, code):
+    return {"status": "error", "message": message}, code
+
+
+def _validate_paging(page, per_page):
+    if page is None or page < 1:
+        return _tukar_error("Parameter page harus lebih besar dari 0", 400)
+    if per_page is None or not 1 <= per_page <= 100:
+        return _tukar_error("Parameter per_page harus berada antara 1 dan 100", 400)
+    return None
+
+
+def _parse_date(value, field):
+    if not value:
+        return None, None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date(), None
+    except ValueError:
+        return None, _tukar_error(f"Format {field} harus YYYY-MM-DD", 400)
+
+
+def _clean_text(value, field, max_len=500):
+    if value is None:
+        return None, None
+    if not isinstance(value, str):
+        return None, _tukar_error(f"{field} harus berupa teks", 400)
+    value = value.strip()
+    if len(value) > max_len:
+        return None, _tukar_error(f"{field} maksimal {max_len} karakter", 400)
+    return value or None, None
+
+
+@jadwal_ns.route("/tukar/kandidat")
+class JadwalTukarKandidatResource(Resource):
+
+    @role_required("mentor")
+    @jadwal_ns.expect(tukar_kandidat_parser)
+    def get(self):
+        """Akses: mentor, Daftar grup jadwal mentor lain yang bisa ditukar dengan grup milik Anda"""
+
+        id_user = int(get_jwt_identity())
+        args = tukar_kandidat_parser.parse_args()
+
+        tanggal, err = _parse_date(args.get("tanggal"), "tanggal")
+        if err:
+            return err
+
+        try:
+            result = qt.get_kandidat_tukar(
+                id_mentor=id_user,
+                id_jadwal=args["id_jadwal"],
+                tanggal=tanggal,
+                filter_mentor=args.get("id_mentor"),
+                search=args.get("search"),
+            )
+            return {"status": "success", "data": result}, 200
+
+        except qt.TukarError as e:
+            return _tukar_error(e.message, e.code)
+
+        except SQLAlchemyError as e:
+            print(f"[GET /jadwal/tukar/kandidat] Error: {e}")
+            return _tukar_error("Internal server error", 500)
+
+
+@jadwal_ns.route("/tukar")
+class JadwalTukarListResource(Resource):
+
+    @role_required("mentor")
+    @jadwal_ns.expect(tukar_request_model)
+    def post(self):
+        """Akses: mentor, Mengajukan tukar grup jadwal dengan mentor lain"""
+
+        id_user = int(get_jwt_identity())
+        data = request.get_json(silent=True) or {}
+
+        id_asal = data.get("id_jadwal_asal")
+        id_tujuan = data.get("id_jadwal_tujuan")
+
+        if not isinstance(id_asal, int) or not isinstance(id_tujuan, int):
+            return _tukar_error("id_jadwal_asal dan id_jadwal_tujuan wajib diisi dengan angka", 400)
+
+        if id_asal == id_tujuan:
+            return _tukar_error("id_jadwal_asal dan id_jadwal_tujuan tidak boleh sama", 400)
+
+        alasan, err = _clean_text(data.get("alasan"), "alasan")
+        if err:
+            return err
+
+        try:
+            result = qt.create_tukar_request(id_user, id_asal, id_tujuan, alasan)
+            return {
+                "status": "success",
+                "message": "Request tukar jadwal berhasil dikirim",
+                "data": result
+            }, 201
+
+        except qt.TukarError as e:
+            return _tukar_error(e.message, e.code)
+
+        except SQLAlchemyError as e:
+            print(f"[POST /jadwal/tukar] Error: {e}")
+            return _tukar_error("Internal server error", 500)
+
+    @role_required(["admin", "mentor"])
+    @jadwal_ns.expect(tukar_list_parser)
+    def get(self):
+        """Akses: admin/mentor, Daftar request tukar jadwal (mentor: masuk/keluar, admin: semua)"""
+
+        id_user = int(get_jwt_identity())
+        role = get_jwt()["role"]
+        args = tukar_list_parser.parse_args()
+
+        tipe = (args.get("tipe") or "semua").lower()
+        status = (args.get("status") or "").upper() or None
+
+        if tipe not in ("masuk", "keluar", "semua"):
+            return _tukar_error("Parameter tipe harus masuk, keluar, atau semua", 400)
+
+        if status and status not in qt.STATUS_TUKAR:
+            return _tukar_error(f"Parameter status harus salah satu dari {', '.join(qt.STATUS_TUKAR)}", 400)
+
+        err = _validate_paging(args.get("page"), args.get("per_page"))
+        if err:
+            return err
+
+        try:
+            result = qt.get_tukar_requests(
+                id_user=id_user,
+                role=role,
+                tipe=tipe,
+                status=status,
+                id_mentor=args.get("id_mentor") if role == "admin" else None,
+                page=args["page"],
+                per_page=args["per_page"],
+            )
+            return {"status": "success", **result}, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /jadwal/tukar] Error: {e}")
+            return _tukar_error("Internal server error", 500)
+
+
+@jadwal_ns.route("/tukar/log")
+class JadwalTukarLogResource(Resource):
+
+    @role_required("admin")
+    @jadwal_ns.expect(tukar_log_parser)
+    def get(self):
+        """Akses: admin, Riwayat aksi semua request tukar jadwal"""
+
+        args = tukar_log_parser.parse_args()
+        aksi = (args.get("aksi") or "").upper() or None
+
+        if aksi and aksi not in TUKAR_AKSI:
+            return _tukar_error(f"Parameter aksi harus salah satu dari {', '.join(TUKAR_AKSI)}", 400)
+
+        start_date, err = _parse_date(args.get("start_date"), "start_date")
+        if err:
+            return err
+
+        end_date, err = _parse_date(args.get("end_date"), "end_date")
+        if err:
+            return err
+
+        if start_date and end_date and start_date > end_date:
+            return _tukar_error("start_date tidak boleh lebih besar dari end_date", 400)
+
+        err = _validate_paging(args.get("page"), args.get("per_page"))
+        if err:
+            return err
+
+        try:
+            result = qt.get_tukar_logs(
+                id_request=args.get("id_request"),
+                id_mentor=args.get("id_mentor"),
+                aksi=aksi,
+                start_date=start_date,
+                end_date=end_date,
+                page=args["page"],
+                per_page=args["per_page"],
+            )
+            return {"status": "success", **result}, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /jadwal/tukar/log] Error: {e}")
+            return _tukar_error("Internal server error", 500)
+
+
+@jadwal_ns.route("/tukar/<int:id_request>")
+class JadwalTukarDetailResource(Resource):
+
+    @role_required(["admin", "mentor"])
+    def get(self, id_request):
+        """Akses: admin/mentor, Detail request tukar beserta isi kedua grup (admin: termasuk log)"""
+
+        id_user = int(get_jwt_identity())
+        role = get_jwt()["role"]
+
+        try:
+            result = qt.get_tukar_request_detail(id_request, id_user, role)
+
+            if not result:
+                return _tukar_error("Request tukar jadwal tidak ditemukan", 404)
+
+            return {"status": "success", "data": result}, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /jadwal/tukar/{id_request}] Error: {e}")
+            return _tukar_error("Internal server error", 500)
+
+
+@jadwal_ns.route("/tukar/<int:id_request>/terima")
+class JadwalTukarTerimaResource(Resource):
+
+    @role_required("mentor")
+    @jadwal_ns.expect(tukar_respon_model)
+    def patch(self, id_request):
+        """Akses: mentor tujuan, Menerima request tukar (jadwal langsung ditukar)"""
+
+        id_user = int(get_jwt_identity())
+        data = request.get_json(silent=True) or {}
+
+        catatan, err = _clean_text(data.get("catatan_respon"), "catatan_respon")
+        if err:
+            return err
+
+        try:
+            result = qt.accept_tukar_request(id_request, id_user, catatan)
+            return {"status": "success", "message": "Tukar jadwal berhasil", "data": result}, 200
+
+        except qt.TukarError as e:
+            return _tukar_error(e.message, e.code)
+
+        except SQLAlchemyError as e:
+            print(f"[PATCH /jadwal/tukar/{id_request}/terima] Error: {e}")
+            return _tukar_error("Internal server error", 500)
+
+
+@jadwal_ns.route("/tukar/<int:id_request>/tolak")
+class JadwalTukarTolakResource(Resource):
+
+    @role_required("mentor")
+    @jadwal_ns.expect(tukar_respon_model)
+    def patch(self, id_request):
+        """Akses: mentor tujuan, Menolak request tukar"""
+
+        id_user = int(get_jwt_identity())
+        data = request.get_json(silent=True) or {}
+
+        catatan, err = _clean_text(data.get("catatan_respon"), "catatan_respon")
+        if err:
+            return err
+
+        try:
+            result = qt.reject_tukar_request(id_request, id_user, catatan)
+            return {"status": "success", "message": "Request tukar jadwal ditolak", "data": result}, 200
+
+        except qt.TukarError as e:
+            return _tukar_error(e.message, e.code)
+
+        except SQLAlchemyError as e:
+            print(f"[PATCH /jadwal/tukar/{id_request}/tolak] Error: {e}")
+            return _tukar_error("Internal server error", 500)
+
+
+@jadwal_ns.route("/tukar/<int:id_request>/batal")
+class JadwalTukarBatalResource(Resource):
+
+    @role_required("mentor")
+    def patch(self, id_request):
+        """Akses: mentor pengaju, Membatalkan request tukar yang masih PENDING"""
+
+        id_user = int(get_jwt_identity())
+
+        try:
+            result = qt.cancel_tukar_request(id_request, id_user)
+            return {"status": "success", "message": "Request tukar jadwal dibatalkan", "data": result}, 200
+
+        except qt.TukarError as e:
+            return _tukar_error(e.message, e.code)
+
+        except SQLAlchemyError as e:
+            print(f"[PATCH /jadwal/tukar/{id_request}/batal] Error: {e}")
+            return _tukar_error("Internal server error", 500)
