@@ -1523,7 +1523,7 @@ class JadwalBulkHistoryResource(Resource):
 class JadwalBulkRollbackResource(Resource):
 
     @role_required("admin")
-    def post(self, import_id):
+    def delete(self, import_id):
         """
         Akses: admin
 
