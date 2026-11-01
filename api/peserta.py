@@ -33,7 +33,7 @@ upload_peserta_parser.add_argument(
 peserta_parser = reqparse.RequestParser()
 peserta_parser.add_argument('page', type=int, default=1, help='Halaman')
 peserta_parser.add_argument('limit', type=int, default=20, help='Jumlah data per halaman')
-peserta_parser.add_argument('search', type=str, required=False, help='Search nama/email')
+peserta_parser.add_argument('search', type=str, required=False, help='Search nama/email/kelas/kelompok')
 peserta_parser.add_argument('id_batch', type=int, required=False, help='Filter berdasarkan batch')
 peserta_parser.add_argument(
     'batch_filter', type=str,
@@ -42,14 +42,19 @@ peserta_parser.add_argument(
     help='Filter batch: aktif | nonaktif | tanpa | publik (nonaktif + tanpa)'
 )
 
+peserta_search_parser = reqparse.RequestParser()
+peserta_search_parser.add_argument('search', type=str, required=False, help='Search nama/email/kelas/kelompok')
+
 @peserta_ns.route('')
 class PesertaListResource(Resource):
     # @session_required
+    @peserta_ns.expect(peserta_search_parser)
     @role_required('admin')
     def get(self):
-        """Akses: (admin), Mengambil list semua peserta"""
+        """Akses: (admin), Mengambil list semua peserta (search nama/email/kelas/kelompok)"""
         try:
-            result = get_all_peserta()
+            args = peserta_search_parser.parse_args()
+            result = get_all_peserta(args.get("search"))
             if not result:
                 return {'status': 'error', 'message': 'Tidak ada peserta ditemukan'}, 404
             return result, 200

@@ -38,15 +38,66 @@ def check_email_exists(email, exclude_id=None):
         return None
 
 
-def get_all_peserta():
+def kelompok_lateral_join(batch_column=None):
+    """LEFT JOIN LATERAL kelompok belajar peserta (alias kel).
+    batch_column: kolom batch acuan (mis. 'b.id_batch'); None = kelompok aktif terbaru di batch mana pun."""
+    batch_filter = f"AND kb.id_batch = {batch_column}" if batch_column else ""
+    return f"""
+                LEFT JOIN LATERAL (
+                    SELECT kb.id_kelompok, kb.nama_kelompok
+                    FROM kelompok_belajar_peserta kbp
+                    INNER JOIN kelompok_belajar kb
+                        ON kb.id_kelompok = kbp.id_kelompok
+                       AND kb.status = 1
+                    WHERE kbp.id_peserta = u.id_user
+                      AND kbp.status = 1
+                      {batch_filter}
+                    ORDER BY kbp.created_at DESC
+                    LIMIT 1
+                ) kel ON TRUE
+            """
+
+
+def peserta_search_clause(batch_column=None, kelas_column=None):
+    """Kondisi search nama/email/kelas/kelompok (param :search)."""
+    batch_filter = f"AND kb_s.id_batch = {batch_column}" if batch_column else ""
+    kelas_filter = f"OR {kelas_column} ILIKE :search" if kelas_column else ""
+    return f"""
+                AND (
+                    u.nama ILIKE :search
+                    OR u.email ILIKE :search
+                    {kelas_filter}
+                    OR EXISTS (
+                        SELECT 1
+                        FROM kelompok_belajar_peserta kbp_s
+                        INNER JOIN kelompok_belajar kb_s
+                            ON kb_s.id_kelompok = kbp_s.id_kelompok
+                           AND kb_s.status = 1
+                        WHERE kbp_s.id_peserta = u.id_user
+                          AND kbp_s.status = 1
+                          {batch_filter}
+                          AND kb_s.nama_kelompok ILIKE :search
+                    )
+                )
+            """
+
+
+def get_all_peserta(search=None):
     engine = get_connection()
     try:
         with engine.connect() as connection:
-            result = connection.execute(text("""
+            params = {}
+            search_clause = ""
+            if search:
+                search_clause = peserta_search_clause("b.id_batch", "pk.nama_kelas")
+                params["search"] = f"%{search}%"
+
+            result = connection.execute(text(f"""
                 SELECT 
                     u.id_user, u.nama, u.email, u.no_hp, u.password, u.kode_pemulihan, u.role,
                     b.nama_batch, b.tanggal_mulai, b.tanggal_selesai, ub.tanggal_join, ub.status_enroll,
-                    pk.nama_kelas, pk.id_paketkelas, pk.id_batch, p.id_paket, p.nama_paket
+                    pk.nama_kelas, pk.id_paketkelas, pk.id_batch, p.id_paket, p.nama_paket,
+                    kel.id_kelompok, kel.nama_kelompok
                 FROM users u
                 LEFT JOIN userbatch ub 
                     ON ub.id_user = u.id_user 
@@ -62,10 +113,12 @@ def get_all_peserta():
                    AND pk.status = 1
                 LEFT JOIN paket p 
                     ON p.id_paket = pk.id_paket AND p.status = 1
+                {kelompok_lateral_join("b.id_batch")}
                 WHERE u.role = 'peserta'
                   AND u.status = 1
-                  AND u.nama IS NOT NULL;
-            """)).mappings().fetchall()
+                  AND u.nama IS NOT NULL
+                {search_clause}
+            """), params).mappings().fetchall()
 
             return [serialize_row(row) for row in result]
     except SQLAlchemyError as e:
@@ -82,8 +135,7 @@ def get_all_peserta_aktif(page=1, limit=20, search=None, id_batch=None, batch_fi
     try:
         with engine.connect() as connection:
 
-            base_query = """
-                FROM users u
+            join_clause = """
                 LEFT JOIN userbatch ub 
                     ON ub.id_user = u.id_user AND ub.status = 1
                 LEFT JOIN batch b 
@@ -94,6 +146,11 @@ def get_all_peserta_aktif(page=1, limit=20, search=None, id_batch=None, batch_fi
                     ON pk.id_paketkelas = pkls.id_paketkelas AND pk.status = 1
                 LEFT JOIN paket p 
                     ON p.id_paket = pk.id_paket AND p.status = 1
+            """
+
+            kelompok_join = kelompok_lateral_join("b.id_batch")
+
+            where_clause = """
                 WHERE u.role = 'peserta'
                   AND u.status = 1
             """
@@ -102,28 +159,26 @@ def get_all_peserta_aktif(page=1, limit=20, search=None, id_batch=None, batch_fi
 
             # 🔍 SEARCH
             if search:
-                base_query += """
-                AND (u.nama ILIKE :search OR u.email ILIKE :search)
-                """
+                where_clause += peserta_search_clause("b.id_batch", "pk.nama_kelas")
                 params["search"] = f"%{search}%"
 
             # 📦 FILTER ID BATCH (specific)
             if id_batch:
-                base_query += " AND b.id_batch = :id_batch"
+                where_clause += " AND b.id_batch = :id_batch"
                 params["id_batch"] = id_batch
 
             # 🆕 FILTER KONDISI BATCH
             if batch_filter == "aktif":
-                base_query += " AND b.status = 1"
+                where_clause += " AND b.status = 1"
 
             elif batch_filter == "nonaktif":
-                base_query += " AND b.status = 0"
+                where_clause += " AND b.status = 0"
 
             elif batch_filter == "tanpa":
-                base_query += " AND b.id_batch IS NULL"
+                where_clause += " AND b.id_batch IS NULL"
 
             elif batch_filter == "publik":
-                base_query += """
+                where_clause += """
                 AND (
                     b.status = 0
                     OR b.id_batch IS NULL
@@ -137,8 +192,12 @@ def get_all_peserta_aktif(page=1, limit=20, search=None, id_batch=None, batch_fi
                     b.nama_batch, b.tanggal_mulai, b.tanggal_selesai, b.status as batch_status,
                     ub.tanggal_join, ub.status_enroll,
                     pk.nama_kelas, pk.id_paketkelas, pk.id_batch, 
-                    p.id_paket, p.nama_paket
-                {base_query}
+                    p.id_paket, p.nama_paket,
+                    kel.id_kelompok, kel.nama_kelompok
+                FROM users u
+                {join_clause}
+                {kelompok_join}
+                {where_clause}
                 ORDER BY u.id_user DESC
                 LIMIT :limit OFFSET :offset
             """)
@@ -153,7 +212,9 @@ def get_all_peserta_aktif(page=1, limit=20, search=None, id_batch=None, batch_fi
             # 🔹 COUNT (FIX: DISTINCT biar tidak double)
             count_query = text(f"""
                 SELECT COUNT(DISTINCT u.id_user)
-                {base_query}
+                FROM users u
+                {join_clause}
+                {where_clause}
             """)
 
             total = connection.execute(count_query, params).scalar()
@@ -172,25 +233,54 @@ def get_all_peserta_aktif(page=1, limit=20, search=None, id_batch=None, batch_fi
         print(f"Error occurred: {str(e)}")
         return None
 
-def get_all_peserta_public():
+def get_all_peserta_public(page=1, limit=20, search=None):
     engine = get_connection()
+    offset = (page - 1) * limit
     try:
         with engine.connect() as connection:
-            result = connection.execute(text("""
-                SELECT 
-                    u.id_user, u.nama, u.email, u.no_hp, u.password, u.kode_pemulihan, u.role
+            from_clause = """
                 FROM users u
                 LEFT JOIN userbatch ub 
-                ON ub.id_user = u.id_user AND ub.status = 1
+                    ON ub.id_user = u.id_user AND ub.status = 1
+            """
+            where_clause = """
                 WHERE u.role = 'peserta'
-                AND ub.id_user IS NULL
-                AND u.status = 1;
-            """)).mappings().fetchall()
+                  AND ub.id_user IS NULL
+                  AND u.status = 1
+            """
+            params = {"limit": limit, "offset": offset}
 
-            return [serialize_row(row) for row in result]
+            # Peserta public tidak punya batch aktif → kelompok diambil dari batch mana pun
+            if search:
+                where_clause += peserta_search_clause()
+                params["search"] = f"%{search}%"
+
+            data = connection.execute(text(f"""
+                SELECT 
+                    u.id_user, u.nama, u.email, u.no_hp, u.password, u.kode_pemulihan, u.role,
+                    kel.id_kelompok, kel.nama_kelompok
+                {from_clause}
+                {kelompok_lateral_join()}
+                {where_clause}
+                ORDER BY u.id_user DESC
+                LIMIT :limit OFFSET :offset
+            """), params).mappings().fetchall()
+
+            total = connection.execute(text(f"""
+                SELECT COUNT(DISTINCT u.id_user)
+                {from_clause}
+                {where_clause}
+            """), params).scalar()
+
+            return {
+                "data": [serialize_row(row) for row in data],
+                "total": total,
+                "page": page,
+                "limit": limit
+            }
     except SQLAlchemyError as e:
         print(f"Error occurred: {str(e)}")
-        return []
+        return None
 
 def insert_peserta_with_batch_kelas(payload):
     engine = get_connection()
