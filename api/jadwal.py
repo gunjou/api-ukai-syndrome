@@ -49,6 +49,20 @@ bulk_import_response_model = jadwal_ns.model("BulkImportResponse", {
 })
 
 
+jadwal_v2_model = jadwal_ns.model("JadwalV2", {
+    "id_paketkelas": fields.Integer(required=False, description="ID kelas (ONLINE/OFFLINE). Isi tepat satu dari id_paketkelas / id_kelompok / id_mentorship"),
+    "id_kelompok": fields.Integer(required=False, description="ID kelompok belajar (khusus OFFLINE)"),
+    "id_mentorship": fields.Integer(required=False, description="ID kelas private / mentorship (ONLINE/OFFLINE)"),
+    "id_mentor": fields.Integer(required=True, description="ID mentor"),
+    "topik": fields.String(required=False, description="Topik pertemuan"),
+    "catatan": fields.String(required=False, description="Catatan pertemuan"),
+    "tanggal": fields.Date(required=True, description="Tanggal jadwal"),
+    "waktu_mulai": fields.String(required=True, description="Waktu mulai, format HH:MM"),
+    "waktu_selesai": fields.String(required=True, description="Waktu selesai, format HH:MM"),
+    "type_pertemuan": fields.String(required=True, description="Tipe pertemuan (ONLINE/OFFLINE)")
+})
+
+
 jadwal_group_edit_model = jadwal_ns.model("JadwalGroupEditV2", {
     "id_mentor": fields.Integer(required=True, description="ID mentor (diterapkan ke semua jadwal dalam group)"),
     "topik": fields.String(required=False, description="Topik pertemuan"),
@@ -163,6 +177,53 @@ def validate_target_jadwal(type_pertemuan, id_paketkelas, id_kelompok, id_mentor
 
     if not is_valid_mentor(id_mentor):
         return {"status": "error", "message": "Mentor tidak ditemukan"}, 404
+
+    return None
+
+
+def validate_target_jadwal_v2(type_pertemuan, id_paketkelas, id_kelompok, id_mentorship, id_mentor):
+    """
+    Aturan target jadwal v2 (mendukung kelas private):
+    - Wajib tepat satu: id_paketkelas / id_kelompok / id_mentorship
+    - ONLINE  -> kelas atau kelas private
+    - OFFLINE -> kelompok, kelas, atau kelas private
+    Return None jika valid, atau (response, status_code) jika tidak valid.
+    """
+
+    targets = [t for t in (id_paketkelas, id_kelompok, id_mentorship) if t is not None]
+
+    if len(targets) != 1:
+        return {
+            "status": "error",
+            "message": "Isi tepat satu: kelas, kelompok, atau kelas private"
+        }, 400
+
+    if type_pertemuan == "ONLINE" and id_kelompok is not None:
+        return {
+            "status": "error",
+            "message": "Pertemuan ONLINE hanya bisa untuk kelas atau kelas private"
+        }, 400
+
+    if not is_valid_mentor(id_mentor):
+        return {"status": "error", "message": "Mentor tidak ditemukan"}, 404
+
+    if id_paketkelas is not None:
+        if not is_valid_paketkelas(id_paketkelas):
+            return {"status": "error", "message": "Paket kelas tidak ditemukan"}, 404
+
+        if not is_mentor_of_kelas(id_mentor, id_paketkelas):
+            return {"status": "error", "message": "Mentor tidak terdaftar pada kelas tersebut"}, 400
+
+        return None
+
+    if id_kelompok is not None:
+        if not is_valid_kelompok(id_kelompok):
+            return {"status": "error", "message": "Kelompok tidak ditemukan"}, 404
+
+        return None
+
+    if not get_mentorship_v2(id_mentorship):
+        return {"status": "error", "message": "Kelas private tidak ditemukan"}, 404
 
     return None
 
@@ -951,6 +1012,213 @@ class JadwalGroupSwitchMentorV2Resource(Resource):
 
         except SQLAlchemyError as e:
             print(f"[PATCH /jadwal/v2/group/switch-mentor] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+# ============================================================================ #
+#          #ANCHOR - JADWAL SATUAN V2 (KELAS / KELOMPOK / KELAS PRIVATE)       #
+# ============================================================================ #
+
+private_dropdown_v2_parser = jadwal_ns.parser()
+private_dropdown_v2_parser.add_argument("search", type=str, required=False, location="args", help="Cari nama kelas private, mentor, atau peserta")
+private_dropdown_v2_parser.add_argument("id_mentor", type=int, required=False, location="args", help="Filter kelas private milik mentor tertentu")
+
+
+def _parse_jadwal_v2_body(data):
+    """Validasi field umum body jadwal v2. Return (payload, error)."""
+    if not data:
+        return None, ({"status": "error", "message": "Request body tidak boleh kosong"}, 400)
+
+    required_fields = ["id_mentor", "tanggal", "waktu_mulai", "waktu_selesai", "type_pertemuan"]
+    missing_fields = [field for field in required_fields if data.get(field) in (None, "")]
+
+    if missing_fields:
+        return None, ({"status": "error", "message": f"Field wajib diisi: {', '.join(missing_fields)}"}, 400)
+
+    type_pertemuan = str(data["type_pertemuan"]).upper()
+
+    if type_pertemuan not in ("ONLINE", "OFFLINE"):
+        return None, ({"status": "error", "message": "type_pertemuan harus ONLINE atau OFFLINE"}, 400)
+
+    if data["waktu_mulai"] >= data["waktu_selesai"]:
+        return None, ({"status": "error", "message": "waktu_mulai harus lebih kecil dari waktu_selesai"}, 400)
+
+    payload = {
+        key: (data.get(key) if data.get(key) not in ("", None) else None)
+        for key in ("id_paketkelas", "id_kelompok", "id_mentorship")
+    }
+    payload.update({
+        "id_mentor": data["id_mentor"],
+        "topik": data.get("topik"),
+        "catatan": data.get("catatan"),
+        "tanggal": data["tanggal"],
+        "waktu_mulai": data["waktu_mulai"],
+        "waktu_selesai": data["waktu_selesai"],
+        "type_pertemuan": type_pertemuan,
+    })
+
+    error = validate_target_jadwal_v2(
+        type_pertemuan,
+        payload["id_paketkelas"],
+        payload["id_kelompok"],
+        payload["id_mentorship"],
+        payload["id_mentor"]
+    )
+
+    return (None, error) if error else (payload, None)
+
+
+@jadwal_ns.route("/v2/private-dropdown")
+class JadwalPrivateDropdownV2Resource(Resource):
+
+    @role_required("admin")
+    @jadwal_ns.expect(private_dropdown_v2_parser)
+    def get(self):
+        """Akses: admin, [V2] Dropdown kelas private (mentorship) aktif untuk form jadwal"""
+
+        args = private_dropdown_v2_parser.parse_args()
+
+        try:
+            result = get_mentorship_dropdown_v2(
+                search=args.get("search"),
+                id_mentor=args.get("id_mentor")
+            )
+
+            return {"status": "success", "data": result, "meta": {"total": len(result)}}, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /jadwal/v2/private-dropdown] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+@jadwal_ns.route("/v2")
+class JadwalCreateV2Resource(Resource):
+
+    @role_required("admin")
+    @jadwal_ns.expect(jadwal_v2_model)
+    def post(self):
+        """Akses: admin, [V2] Buat 1 jadwal untuk kelas / kelompok / kelas private"""
+
+        id_user = get_jwt_identity()
+
+        try:
+            payload, error = _parse_jadwal_v2_body(request.get_json(silent=True))
+
+            if error:
+                return error
+
+            result = insert_jadwal_v2({
+                **payload,
+                "created_by": id_user,
+                "updated_by": id_user
+            })
+
+            if not result:
+                return {"status": "error", "message": "Gagal membuat jadwal"}, 400
+
+            return {"status": "success", "message": "Jadwal berhasil dibuat", "data": result}, 201
+
+        except SQLAlchemyError as e:
+            print(f"[POST /jadwal/v2] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+@jadwal_ns.route("/v2/<int:id_jadwal>")
+class JadwalV2Resource(Resource):
+
+    @role_required("admin")
+    def get(self, id_jadwal):
+        """Akses: admin, [V2] Detail 1 jadwal (termasuk kelas private)"""
+
+        try:
+            result = get_jadwal_by_id_v2(id_jadwal)
+
+            if not result:
+                return {"status": "error", "message": "Jadwal tidak ditemukan"}, 404
+
+            return {"status": "success", "data": result}, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /jadwal/v2/{id_jadwal}] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+    @role_required("admin")
+    @jadwal_ns.expect(jadwal_v2_model)
+    def put(self, id_jadwal):
+        """Akses: admin, [V2] Ubah 1 jadwal, bisa ganti tipe & target (kelas / kelompok / kelas private)"""
+
+        id_user = get_jwt_identity()
+        data = request.get_json(silent=True)
+
+        if not data:
+            return {"status": "error", "message": "Request body tidak boleh kosong"}, 400
+
+        required_fields = ["id_mentor", "tanggal", "waktu_mulai", "waktu_selesai", "type_pertemuan"]
+        missing_fields = [field for field in required_fields if data.get(field) in (None, "")]
+
+        if missing_fields:
+            return {"status": "error", "message": f"Field wajib diisi: {', '.join(missing_fields)}"}, 400
+
+        type_pertemuan = str(data["type_pertemuan"]).upper()
+
+        if type_pertemuan not in ("ONLINE", "OFFLINE"):
+            return {"status": "error", "message": "type_pertemuan harus ONLINE atau OFFLINE"}, 400
+
+        if data["waktu_mulai"] >= data["waktu_selesai"]:
+            return {"status": "error", "message": "waktu_mulai harus lebih kecil dari waktu_selesai"}, 400
+
+        target = {
+            key: (data.get(key) if data.get(key) not in ("", None) else None)
+            for key in ("id_paketkelas", "id_kelompok", "id_mentorship")
+        }
+
+        try:
+            existing = get_jadwal_by_id_v2(id_jadwal)
+
+            if not existing:
+                return {"status": "error", "message": "Jadwal tidak ditemukan"}, 404
+
+            error = validate_target_jadwal_v2(
+                type_pertemuan,
+                target["id_paketkelas"],
+                target["id_kelompok"],
+                target["id_mentorship"],
+                data["id_mentor"]
+            )
+
+            if error:
+                return error
+
+            # Target tidak boleh diganti jika jadwal sudah memiliki data absensi
+            target_berubah = any(existing.get(key) != value for key, value in target.items())
+
+            if target_berubah and is_jadwal_has_absensi(id_jadwal):
+                return {
+                    "status": "error",
+                    "message": "Kelas/kelompok tidak dapat diubah karena jadwal sudah memiliki data absensi"
+                }, 400
+
+            result = update_jadwal_v2({
+                "id_jadwal": id_jadwal,
+                **target,
+                "id_mentor": data["id_mentor"],
+                "topik": data.get("topik"),
+                "catatan": data.get("catatan"),
+                "tanggal": data["tanggal"],
+                "waktu_mulai": data["waktu_mulai"],
+                "waktu_selesai": data["waktu_selesai"],
+                "type_pertemuan": type_pertemuan,
+                "updated_by": id_user
+            })
+
+            if not result:
+                return {"status": "error", "message": "Gagal mengubah jadwal"}, 400
+
+            return {"status": "success", "message": "Jadwal berhasil diubah", "data": result}, 200
+
+        except SQLAlchemyError as e:
+            print(f"[PUT /jadwal/v2/{id_jadwal}] Error: {e}")
             return {"status": "error", "message": "Internal server error"}, 500
 
 

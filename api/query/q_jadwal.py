@@ -770,7 +770,12 @@ _GROUP_EFEKTIF_SELESAI = "COALESCE(j.waktu_selesai_reschedule, j.waktu_selesai)"
 
 _GROUP_SELECT_COLUMNS = f"""
     j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_kelompok, kb.nama_kelompok,
-    CASE WHEN j.id_kelompok IS NOT NULL THEN 'KELOMPOK' ELSE 'KELAS' END AS target_type,
+    j.id_mentorship, ms.nama_mentorship,
+    CASE
+        WHEN j.id_mentorship IS NOT NULL THEN 'PRIVATE'
+        WHEN j.id_kelompok IS NOT NULL THEN 'KELOMPOK'
+        ELSE 'KELAS'
+    END AS target_type,
     j.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor,
     j.topik, j.catatan,
     j.tanggal, j.waktu_mulai, j.waktu_selesai,
@@ -784,6 +789,7 @@ _GROUP_SELECT_COLUMNS = f"""
 _GROUP_JOINS = """
     LEFT JOIN paketkelas pk ON pk.id_paketkelas = j.id_paketkelas
     LEFT JOIN kelompok_belajar kb ON kb.id_kelompok = j.id_kelompok
+    LEFT JOIN mentorship ms ON ms.id_mentorship = j.id_mentorship
     LEFT JOIN users u ON u.id_user = j.id_mentor
 """
 
@@ -791,7 +797,7 @@ _GROUP_JOINS = """
 def _build_jadwal_groups(rows):
     """Kelompokkan baris jadwal per (mentor, type_pertemuan, tanggal, jam mulai, jam selesai) efektif.
     Data jadwal (topik, catatan, waktu, reschedule, dll) ada di level group;
-    `classes` hanya berisi pembeda tiap jadwal: id_jadwal, kelas, kelompok.
+    `classes` hanya berisi pembeda tiap jadwal: id_jadwal, kelas, kelompok, kelas private.
     Urutan baris input dipertahankan."""
     grouped = {}
 
@@ -842,6 +848,8 @@ def _build_jadwal_groups(rows):
             "nama_kelas": item["nama_kelas"],
             "id_kelompok": item["id_kelompok"],
             "nama_kelompok": item["nama_kelompok"],
+            "id_mentorship": item["id_mentorship"],
+            "nama_mentorship": item["nama_mentorship"],
         })
         group["count"] += 1
 
@@ -907,6 +915,7 @@ def get_group_all_jadwal_v2(
                         u.nama ILIKE :search
                         OR pk.nama_kelas ILIKE :search
                         OR kb.nama_kelompok ILIKE :search
+                        OR ms.nama_mentorship ILIKE :search
                         OR j.topik ILIKE :search
                         OR j.catatan ILIKE :search
                     )
@@ -981,7 +990,7 @@ def get_group_all_jadwal_v2(
                     {_GROUP_JOINS}
                     ORDER BY
                         g.urut ASC,
-                        COALESCE(pk.nama_kelas, kb.nama_kelompok) ASC,
+                        COALESCE(pk.nama_kelas, kb.nama_kelompok, ms.nama_mentorship) ASC,
                         j.id_jadwal ASC
                 """),
                 params
@@ -1043,7 +1052,7 @@ def get_group_jadwal_by_id_v2(id_jadwal, id_mentor=None):
                        AND j.status = 1
                     {_GROUP_JOINS}
                     ORDER BY
-                        COALESCE(pk.nama_kelas, kb.nama_kelompok) ASC,
+                        COALESCE(pk.nama_kelas, kb.nama_kelompok, ms.nama_mentorship) ASC,
                         j.id_jadwal ASC
                 """),
                 params
@@ -1079,7 +1088,7 @@ def _get_group_members_v2(conn, id_jadwal, for_update=False):
                 WHERE j.id_jadwal = :id_jadwal
                   AND j.status = 1
             )
-            SELECT j.id_jadwal, j.id_paketkelas, j.id_kelompok, j.id_mentor, j.type_pertemuan
+            SELECT j.id_jadwal, j.id_paketkelas, j.id_kelompok, j.id_mentorship, j.id_mentor, j.type_pertemuan
             FROM jadwal_kelas j
             JOIN ref g
                 ON j.id_mentor = g.id_mentor
@@ -1251,6 +1260,163 @@ def switch_mentor_group_jadwal_v2(id_jadwal_1, id_jadwal_2, id_user):
 
     except SQLAlchemyError as e:
         print(f"[switch_mentor_group_jadwal_v2] Error: {e}")
+        raise
+
+
+# ============================================================================ #
+#              JADWAL SATUAN V2 (mendukung kelas private / mentorship)         #
+# ============================================================================ #
+
+def get_mentorship_v2(id_mentorship):
+    """Data kelas private aktif, atau None."""
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text("""
+                SELECT id_mentorship, id_mentor, id_peserta, nama_mentorship
+                FROM mentorship
+                WHERE id_mentorship = :id_mentorship
+                  AND status = 1
+            """), {"id_mentorship": id_mentorship}).mappings().fetchone()
+
+            return dict(row) if row else None
+
+    except SQLAlchemyError as e:
+        print(f"[get_mentorship_v2] Error: {e}")
+        raise
+
+
+def get_jadwal_by_id_v2(id_jadwal):
+    """Detail 1 jadwal aktif termasuk kelas private (id_mentorship, nama_mentorship)."""
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text(f"""
+                SELECT
+                    {_GROUP_SELECT_COLUMNS},
+                    j.created_by, j.created_at, j.updated_by, j.updated_at
+                FROM jadwal_kelas j
+                {_GROUP_JOINS}
+                WHERE j.id_jadwal = :id_jadwal
+                  AND j.status = 1
+            """), {"id_jadwal": id_jadwal}).mappings().fetchone()
+
+            return serialize_value(row) if row else None
+
+    except SQLAlchemyError as e:
+        print(f"[get_jadwal_by_id_v2] Error: {e}")
+        raise
+
+
+def update_jadwal_v2(payload):
+    """Ubah 1 jadwal termasuk target kelas private. Return detail jadwal atau None."""
+    engine = get_connection()
+
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text("""
+                UPDATE jadwal_kelas
+                SET
+                    id_paketkelas = :id_paketkelas,
+                    id_kelompok = :id_kelompok,
+                    id_mentorship = :id_mentorship,
+                    id_mentor = :id_mentor,
+                    topik = :topik,
+                    catatan = :catatan,
+                    tanggal = :tanggal,
+                    waktu_mulai = :waktu_mulai,
+                    waktu_selesai = :waktu_selesai,
+                    type_pertemuan = :type_pertemuan,
+                    updated_by = :updated_by,
+                    updated_at = :now
+                WHERE id_jadwal = :id_jadwal
+                  AND status = 1
+                RETURNING id_jadwal
+            """), {**payload, "now": get_wib()}).scalar()
+
+        return get_jadwal_by_id_v2(result) if result else None
+
+    except SQLAlchemyError as e:
+        print(f"[update_jadwal_v2] Error: {e}")
+        raise
+
+
+def get_mentorship_dropdown_v2(search=None, id_mentor=None):
+    """Dropdown kelas private (mentorship) aktif beserta mentor & peserta."""
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            where_clause = "WHERE m.status = 1"
+            params = {}
+
+            if id_mentor is not None:
+                where_clause += " AND m.id_mentor = :id_mentor"
+                params["id_mentor"] = id_mentor
+
+            if search and search.strip():
+                where_clause += """
+                    AND (
+                        m.nama_mentorship ILIKE :search
+                        OR mentor.nama ILIKE :search
+                        OR peserta.nama ILIKE :search
+                    )
+                """
+                params["search"] = f"%{search.strip()}%"
+
+            rows = conn.execute(text(f"""
+                SELECT
+                    m.id_mentorship,
+                    m.nama_mentorship,
+                    m.id_mentor,
+                    mentor.nama AS nama_mentor,
+                    mentor.nickname AS nickname_mentor,
+                    m.id_peserta,
+                    peserta.nama AS nama_peserta
+                FROM mentorship m
+                INNER JOIN users mentor
+                    ON mentor.id_user = m.id_mentor
+                   AND mentor.status = 1
+                INNER JOIN users peserta
+                    ON peserta.id_user = m.id_peserta
+                   AND peserta.status = 1
+                {where_clause}
+                ORDER BY m.nama_mentorship ASC NULLS LAST, peserta.nama ASC
+            """), params).mappings().fetchall()
+
+            return [serialize_value(row) for row in rows]
+
+    except SQLAlchemyError as e:
+        print(f"[get_mentorship_dropdown_v2] Error: {e}")
+        raise
+
+
+def insert_jadwal_v2(payload):
+    """Buat 1 jadwal (kelas / kelompok / kelas private). Return detail jadwal atau None."""
+    engine = get_connection()
+
+    try:
+        with engine.begin() as conn:
+            id_jadwal = conn.execute(text("""
+                INSERT INTO jadwal_kelas (
+                    id_paketkelas, id_kelompok, id_mentorship, id_mentor,
+                    topik, catatan, tanggal, waktu_mulai, waktu_selesai, type_pertemuan,
+                    status, created_by, created_at, updated_by, updated_at
+                )
+                VALUES (
+                    :id_paketkelas, :id_kelompok, :id_mentorship, :id_mentor,
+                    :topik, :catatan, :tanggal, :waktu_mulai, :waktu_selesai, :type_pertemuan,
+                    1, :created_by, :now, :updated_by, :now
+                )
+                RETURNING id_jadwal
+            """), {**payload, "now": get_wib()}).scalar()
+
+        return get_jadwal_by_id_v2(id_jadwal) if id_jadwal else None
+
+    except SQLAlchemyError as e:
+        print(f"[insert_jadwal_v2] Error: {e}")
         raise
 
 

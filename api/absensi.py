@@ -1298,3 +1298,23 @@ class AbsensiMentorGroupCheckOutV2Resource(Resource):
         except SQLAlchemyError as e:
             print(f"[PATCH /absensi/v2/mentor/{id_jadwal}/check-out] Error: {e}")
             return {"status": "error", "message": "Internal server error"}, 500
+
+
+@absensi_ns.route("/v2/jadwal/<int:id_jadwal>")
+class AbsensiJadwalV2Resource(Resource):
+
+    @role_required("admin")
+    def get(self, id_jadwal):
+        """Akses: admin, [V2] Detail absensi 1 jadwal (mentor + peserta), termasuk kelas private"""
+
+        try:
+            result = get_absensi_by_jadwal_v2(id_jadwal)
+
+            if not result:
+                return {"status": "error", "message": "Jadwal tidak ditemukan"}, 404
+
+            return {"status": "success", "data": result}, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /absensi/v2/jadwal/{id_jadwal}] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
