@@ -49,6 +49,16 @@ bulk_import_response_model = jadwal_ns.model("BulkImportResponse", {
 })
 
 
+jadwal_group_edit_model = jadwal_ns.model("JadwalGroupEditV2", {
+    "id_mentor": fields.Integer(required=True, description="ID mentor (diterapkan ke semua jadwal dalam group)"),
+    "topik": fields.String(required=False, description="Topik pertemuan"),
+    "catatan": fields.String(required=False, description="Catatan pertemuan"),
+    "tanggal": fields.Date(required=True, description="Tanggal jadwal"),
+    "waktu_mulai": fields.String(required=True, description="Waktu mulai, format HH:MM"),
+    "waktu_selesai": fields.String(required=True, description="Waktu selesai, format HH:MM")
+})
+
+
 switch_mentor_model = jadwal_ns.model("SwitchMentor", {
     "id_jadwal_1": fields.Integer(required=True, description="ID jadwal pertama"),
     "id_jadwal_2": fields.Integer(required=True, description="ID jadwal kedua")
@@ -70,6 +80,10 @@ jadwal_parser.add_argument("start_date", type=str, required=False, location="arg
 jadwal_parser.add_argument("end_date", type=str, required=False, location="args", help="Tanggal akhir periode (YYYY-MM-DD)")
 jadwal_parser.add_argument("page", type=int, required=False, default=1, location="args", help="Halaman")
 jadwal_parser.add_argument("per_page", type=int, required=False, default=50, location="args", help="Jumlah data per halaman, maksimum 100")
+
+# Khusus /v2/group: urutan default "mulai dari sekarang" (tidak mempengaruhi endpoint lama)
+jadwal_group_v2_parser = jadwal_parser.copy()
+jadwal_group_v2_parser.add_argument("upcoming", type=int, required=False, default=0, location="args", help="1 = jadwal yang belum selesai tampil lebih dulu (terdekat), lalu yang sudah selesai (terbaru). 0 = kronologis")
 
 
 mentor_dropdown_parser = jadwal_ns.parser()
@@ -634,6 +648,309 @@ class JadwalGroupResource(Resource):
 
         except SQLAlchemyError as e:
             print(f"[GET /jadwal/{id_jadwal}] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+# ============================================================================ #
+#              #ANCHOR - JADWAL GROUP V2 (ADMIN & MENTOR, PER SLOT)            #
+# ============================================================================ #
+# 1 group = 1 mentor + type_pertemuan + tanggal + jam mulai + jam selesai efektif (setelah reschedule).
+# Satu group selalu hanya 1 type_pertemuan (ONLINE atau OFFLINE), tidak pernah campuran.
+# Endpoint ini terpisah dan tidak mempengaruhi /group maupun /<id>/group yang lama.
+
+@jadwal_ns.route("/v2/group")
+class JadwalGroupListV2Resource(Resource):
+
+    @role_required(["admin", "mentor"])
+    @jadwal_ns.expect(jadwal_group_v2_parser)
+    def get(self):
+        """Akses: admin/mentor, [V2] Daftar jadwal yang di-group per mentor + tanggal + jam (1 slot = 1 jadwal)"""
+
+        id_user = get_jwt_identity()
+
+        try:
+            role = get_jwt()["role"]
+            args = jadwal_group_v2_parser.parse_args()
+            upcoming_first = args.get("upcoming") == 1
+            search = args.get("search")
+
+            type_pertemuan, err = parse_type_pertemuan(args.get("type_pertemuan"))
+            if err:
+                return err
+
+            if role != "admin":
+                result = get_group_all_jadwal_v2(
+                    id_mentor=id_user,
+                    type_pertemuan=type_pertemuan,
+                    search=search,
+                    upcoming_first=upcoming_first
+                )
+                return {
+                    "status": "success",
+                    "data": result,
+                    "meta": {"total": len(result)}
+                }, 200
+
+            page = args.get("page") or 1
+            per_page = args.get("per_page") or 50
+
+            if page < 1:
+                return {"status": "error", "message": "Parameter page harus lebih besar dari 0"}, 400
+
+            if not 1 <= per_page <= 100:
+                return {"status": "error", "message": "Parameter per_page harus berada antara 1 dan 100"}, 400
+
+            start_date = args.get("start_date")
+            end_date = args.get("end_date")
+
+            if not start_date or not end_date:
+                today = datetime.now().date()
+                start_date = today.replace(day=1)
+                end_date = today.replace(day=calendar.monthrange(today.year, today.month)[1])
+            else:
+                try:
+                    start_date = datetime.strptime(str(start_date), "%Y-%m-%d").date()
+                    end_date = datetime.strptime(str(end_date), "%Y-%m-%d").date()
+                except ValueError:
+                    return {"status": "error", "message": "Format tanggal harus YYYY-MM-DD"}, 400
+
+            if start_date > end_date:
+                return {"status": "error", "message": "start_date tidak boleh lebih besar dari end_date"}, 400
+
+            result = get_group_all_jadwal_v2(
+                type_pertemuan=type_pertemuan,
+                id_mentor=args.get("id_mentor"),
+                id_paketkelas=args.get("id_paketkelas"),
+                id_kelompok=args.get("id_kelompok"),
+                search=search,
+                start_date=start_date,
+                end_date=end_date,
+                page=page,
+                per_page=per_page,
+                upcoming_first=upcoming_first
+            )
+
+            return {
+                "status": "success",
+                "data": result["data"],
+                "meta": {
+                    "page": result["page"],
+                    "per_page": result["per_page"],
+                    "total": result["total"],
+                    "total_pages": result["total_pages"],
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat()
+                }
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /jadwal/v2/group] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+@jadwal_ns.route("/v2/group/<int:id_jadwal>")
+class JadwalGroupDetailV2Resource(Resource):
+
+    @role_required(["admin", "mentor"])
+    def get(self, id_jadwal):
+        """Akses: admin/mentor, [V2] Detail 1 group jadwal beserta semua kelas/kelompok di slot tersebut"""
+
+        id_user = get_jwt_identity()
+
+        try:
+            role = get_jwt()["role"]
+            result = get_group_jadwal_by_id_v2(
+                id_jadwal,
+                id_mentor=None if role == "admin" else id_user
+            )
+
+            if not result:
+                return {"status": "error", "message": "Jadwal tidak ditemukan"}, 404
+
+            return {"status": "success", "data": result}, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /jadwal/v2/group/{id_jadwal}] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+    @role_required("admin")
+    @jadwal_ns.expect(jadwal_group_edit_model)
+    def put(self, id_jadwal):
+        """Akses: admin, [V2] Ubah mentor/topik/catatan/tanggal/jam untuk SEMUA jadwal dalam group"""
+
+        id_user = get_jwt_identity()
+        data = request.get_json(silent=True)
+
+        if not data:
+            return {"status": "error", "message": "Request body tidak boleh kosong"}, 400
+
+        required_fields = ["id_mentor", "tanggal", "waktu_mulai", "waktu_selesai"]
+        missing_fields = [field for field in required_fields if data.get(field) in (None, "")]
+
+        if missing_fields:
+            return {"status": "error", "message": f"Field wajib diisi: {', '.join(missing_fields)}"}, 400
+
+        id_mentor = data["id_mentor"]
+        waktu_mulai = data["waktu_mulai"]
+        waktu_selesai = data["waktu_selesai"]
+
+        if waktu_mulai >= waktu_selesai:
+            return {"status": "error", "message": "waktu_mulai harus lebih kecil dari waktu_selesai"}, 400
+
+        try:
+            members = get_group_members_v2(id_jadwal)
+
+            if not members:
+                return {"status": "error", "message": "Jadwal tidak ditemukan"}, 404
+
+            if not is_valid_mentor(id_mentor):
+                return {"status": "error", "message": "Mentor tidak ditemukan"}, 404
+
+            # Jadwal berbasis kelas: mentor baru wajib terdaftar di setiap kelas
+            if any(row["id_mentor"] != id_mentor for row in members):
+                for row in members:
+                    if row["id_paketkelas"] is not None and not is_mentor_of_kelas(id_mentor, row["id_paketkelas"]):
+                        return {
+                            "status": "error",
+                            "message": "Mentor tidak terdaftar pada salah satu kelas dalam group ini"
+                        }, 400
+
+            ids = update_group_jadwal_v2(id_jadwal, {
+                "id_mentor": id_mentor,
+                "topik": data.get("topik"),
+                "catatan": data.get("catatan"),
+                "tanggal": data["tanggal"],
+                "waktu_mulai": waktu_mulai,
+                "waktu_selesai": waktu_selesai,
+                "updated_by": id_user
+            })
+
+            if not ids:
+                return {"status": "error", "message": "Jadwal tidak ditemukan"}, 404
+
+            return {
+                "status": "success",
+                "message": f"{len(ids)} jadwal berhasil diubah",
+                "data": {"id_jadwal": ids}
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[PUT /jadwal/v2/group/{id_jadwal}] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+    @role_required("admin")
+    def delete(self, id_jadwal):
+        """Akses: admin, [V2] Soft delete SEMUA jadwal dalam group"""
+
+        id_user = get_jwt_identity()
+
+        try:
+            ids = delete_group_jadwal_v2(id_jadwal, id_user)
+
+            if not ids:
+                return {"status": "error", "message": "Jadwal tidak ditemukan"}, 404
+
+            return {
+                "status": "success",
+                "message": f"{len(ids)} jadwal berhasil dihapus",
+                "data": {"id_jadwal": ids}
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[DELETE /jadwal/v2/group/{id_jadwal}] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+@jadwal_ns.route("/v2/group/<int:id_jadwal>/reschedule")
+class JadwalGroupRescheduleV2Resource(Resource):
+
+    @role_required("admin")
+    @jadwal_ns.expect(reschedule_model)
+    def patch(self, id_jadwal):
+        """Akses: admin, [V2] Reschedule SEMUA jadwal dalam group"""
+
+        id_user = get_jwt_identity()
+        data = request.get_json(silent=True)
+
+        if not data:
+            return {"status": "error", "message": "Request body tidak boleh kosong"}, 400
+
+        required_fields = ["tanggal_reschedule", "waktu_mulai_reschedule", "waktu_selesai_reschedule"]
+        missing_fields = [field for field in required_fields if data.get(field) in (None, "")]
+
+        if missing_fields:
+            return {"status": "error", "message": f"Field wajib diisi: {', '.join(missing_fields)}"}, 400
+
+        if data["waktu_mulai_reschedule"] >= data["waktu_selesai_reschedule"]:
+            return {
+                "status": "error",
+                "message": "waktu_mulai_reschedule harus lebih kecil dari waktu_selesai_reschedule"
+            }, 400
+
+        try:
+            ids = reschedule_group_jadwal_v2(id_jadwal, {
+                "tanggal_reschedule": data["tanggal_reschedule"],
+                "waktu_mulai_reschedule": data["waktu_mulai_reschedule"],
+                "waktu_selesai_reschedule": data["waktu_selesai_reschedule"],
+                "updated_by": id_user
+            })
+
+            if not ids:
+                return {"status": "error", "message": "Jadwal tidak ditemukan"}, 404
+
+            return {
+                "status": "success",
+                "message": f"{len(ids)} jadwal berhasil di-reschedule",
+                "data": {"id_jadwal": ids}
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[PATCH /jadwal/v2/group/{id_jadwal}/reschedule] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+@jadwal_ns.route("/v2/group/switch-mentor")
+class JadwalGroupSwitchMentorV2Resource(Resource):
+
+    @role_required("admin")
+    @jadwal_ns.expect(switch_mentor_model)
+    def patch(self):
+        """Akses: admin, [V2] Tukar mentor antar 2 group (berlaku untuk semua jadwal di kedua group)"""
+
+        id_user = get_jwt_identity()
+        data = request.get_json(silent=True)
+
+        if not data:
+            return {"status": "error", "message": "Request body tidak boleh kosong"}, 400
+
+        id_jadwal_1 = data.get("id_jadwal_1")
+        id_jadwal_2 = data.get("id_jadwal_2")
+
+        if id_jadwal_1 is None or id_jadwal_2 is None:
+            return {"status": "error", "message": "id_jadwal_1 dan id_jadwal_2 wajib diisi"}, 400
+
+        if id_jadwal_1 == id_jadwal_2:
+            return {"status": "error", "message": "id_jadwal_1 dan id_jadwal_2 tidak boleh sama"}, 400
+
+        try:
+            result = switch_mentor_group_jadwal_v2(id_jadwal_1, id_jadwal_2, id_user)
+
+            if result is None:
+                return {"status": "error", "message": "Jadwal tidak ditemukan"}, 404
+
+            if result == "SAME_GROUP":
+                return {"status": "error", "message": "Kedua jadwal berada di group yang sama"}, 400
+
+            return {
+                "status": "success",
+                "message": "Mentor berhasil ditukar",
+                "data": result
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[PATCH /jadwal/v2/group/switch-mentor] Error: {e}")
             return {"status": "error", "message": "Internal server error"}, 500
 
 

@@ -1156,3 +1156,145 @@ class AbsensiJadwalResource(Resource):
         except SQLAlchemyError as e:
             print(f"[GET /absensi/jadwal/{id_jadwal}] Error: {e}")
             return {"status": "error", "message": "Internal server error"}, 500
+
+
+
+# ============================================================================ #
+#             #ANCHOR - ABSENSI MENTOR GROUP V2 (ADMIN, PER SLOT JADWAL)       #
+# ============================================================================ #
+# 1 group = mentor + type_pertemuan + tanggal + jam mulai + jam selesai efektif.
+# Endpoint terpisah, tidak mempengaruhi /absensi/mentor maupun /absensi/jadwal/<id>.
+
+absensi_group_v2_parser = absensi_ns.parser()
+absensi_group_v2_parser.add_argument("tanggal", type=str, required=False, location="args", help="Filter tanggal efektif jadwal (YYYY-MM-DD). Kosong = semua tanggal")
+absensi_group_v2_parser.add_argument("type_pertemuan", type=str, required=False, location="args", help="Filter tipe pertemuan: ONLINE / OFFLINE")
+absensi_group_v2_parser.add_argument("search", type=str, required=False, location="args", help="Cari nama kelas, kelompok, mentor, atau topik")
+
+
+@absensi_ns.route("/v2/mentor")
+class AbsensiMentorGroupListV2Resource(Resource):
+
+    @role_required("admin")
+    @absensi_ns.expect(absensi_group_v2_parser)
+    def get(self):
+        """Akses: admin, [V2] Daftar absensi mentor yang di-group per mentor + tipe + tanggal + jam"""
+
+        args = absensi_group_v2_parser.parse_args()
+
+        tanggal = args.get("tanggal")
+        if tanggal:
+            try:
+                tanggal = datetime.strptime(tanggal, "%Y-%m-%d").date()
+            except ValueError:
+                return {"status": "error", "message": "Format tanggal harus YYYY-MM-DD"}, 400
+        else:
+            tanggal = None
+
+        type_pertemuan = (args.get("type_pertemuan") or "").strip().upper() or None
+        if type_pertemuan and type_pertemuan not in ("ONLINE", "OFFLINE"):
+            return {"status": "error", "message": "Parameter type_pertemuan harus ONLINE atau OFFLINE"}, 400
+
+        try:
+            result = get_group_absensi_mentor_v2(
+                tanggal=tanggal,
+                type_pertemuan=type_pertemuan,
+                search=args.get("search")
+            )
+
+            return {
+                "status": "success",
+                "data": result,
+                "meta": {"total": len(result)}
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /absensi/v2/mentor] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+@absensi_ns.route("/v2/mentor/<int:id_jadwal>")
+class AbsensiMentorGroupDetailV2Resource(Resource):
+
+    @role_required("admin")
+    def get(self, id_jadwal):
+        """Akses: admin, [V2] Detail 1 group absensi mentor (semua kelas/kelompok di slot yang sama dengan id_jadwal)"""
+
+        try:
+            result = get_group_absensi_mentor_v2(id_jadwal=id_jadwal)
+
+            if not result:
+                return {"status": "error", "message": "Absensi tidak ditemukan"}, 404
+
+            return {"status": "success", "data": result[0]}, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /absensi/v2/mentor/{id_jadwal}] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+@absensi_ns.route("/v2/mentor/<int:id_jadwal>/check-out")
+class AbsensiMentorGroupCheckOutV2Resource(Resource):
+
+    @role_required("admin")
+    @absensi_ns.expect(admin_checkout_mentor_model)
+    def patch(self, id_jadwal):
+        """
+        Akses: admin, [V2] Check-out manual untuk SEMUA kelas/kelompok dalam 1 group
+
+        - Berlaku untuk absensi di group yang sudah check-in dan belum check-out
+        - Tanggal check-out mengikuti tanggal check-in masing-masing
+        - Jam check-out harus setelah check-in dan tidak melebihi waktu sekarang
+        - Semua berhasil atau tidak sama sekali
+        """
+
+        data = request.get_json(silent=True)
+
+        if not data:
+            return {"status": "error", "message": "Request body tidak boleh kosong"}, 400
+
+        waktu_check_out = str(data.get("waktu_check_out") or "").strip()
+
+        if not waktu_check_out:
+            return {"status": "error", "message": "waktu_check_out wajib diisi"}, 400
+
+        jam_check_out = None
+        for fmt in ("%H:%M", "%H:%M:%S"):
+            try:
+                jam_check_out = datetime.strptime(waktu_check_out, fmt).time()
+                break
+            except ValueError:
+                continue
+
+        if jam_check_out is None:
+            return {"status": "error", "message": "Format waktu_check_out harus HH:MM, contoh 22:00"}, 400
+
+        try:
+            result, error = checkout_group_absensi_mentor_v2(
+                id_jadwal,
+                jam_check_out,
+                get_wib().replace(tzinfo=None)
+            )
+
+            if error:
+                code, detail = error
+                messages = {
+                    "NOT_FOUND": ("Absensi mentor tidak ditemukan", 404),
+                    "NOTHING_TO_CHECKOUT": ("Tidak ada absensi yang perlu di-check-out pada group ini", 409),
+                    "BEFORE_CHECK_IN": ("Waktu check-out harus setelah waktu check-in", 400),
+                    "AFTER_NOW": ("Waktu check-out tidak boleh melebihi waktu sekarang", 400),
+                }
+                message, status_code = messages[code]
+                body = {"status": "error", "message": message}
+                if detail:
+                    body["data"] = detail
+                return body, status_code
+
+            return {
+                "status": "success",
+                "message": f"Check-out {result['total']} jadwal berhasil dilakukan oleh admin",
+                "data": result
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[PATCH /absensi/v2/mentor/{id_jadwal}/check-out] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500

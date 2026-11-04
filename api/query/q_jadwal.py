@@ -764,6 +764,496 @@ def reschedule_jadwal_by_mentor(payload):
 
 
 # =================================== GROUP ================================== #
+_GROUP_EFEKTIF_TANGGAL = "COALESCE(j.tanggal_reschedule, j.tanggal)"
+_GROUP_EFEKTIF_MULAI = "COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai)"
+_GROUP_EFEKTIF_SELESAI = "COALESCE(j.waktu_selesai_reschedule, j.waktu_selesai)"
+
+_GROUP_SELECT_COLUMNS = f"""
+    j.id_jadwal, j.id_paketkelas, pk.nama_kelas, j.id_kelompok, kb.nama_kelompok,
+    CASE WHEN j.id_kelompok IS NOT NULL THEN 'KELOMPOK' ELSE 'KELAS' END AS target_type,
+    j.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor,
+    j.topik, j.catatan,
+    j.tanggal, j.waktu_mulai, j.waktu_selesai,
+    j.tanggal_reschedule, j.waktu_mulai_reschedule, j.waktu_selesai_reschedule,
+    {_GROUP_EFEKTIF_TANGGAL} AS tanggal_efektif,
+    {_GROUP_EFEKTIF_MULAI} AS waktu_mulai_efektif,
+    {_GROUP_EFEKTIF_SELESAI} AS waktu_selesai_efektif,
+    j.type_pertemuan, j.status
+"""
+
+_GROUP_JOINS = """
+    LEFT JOIN paketkelas pk ON pk.id_paketkelas = j.id_paketkelas
+    LEFT JOIN kelompok_belajar kb ON kb.id_kelompok = j.id_kelompok
+    LEFT JOIN users u ON u.id_user = j.id_mentor
+"""
+
+
+def _build_jadwal_groups(rows):
+    """Kelompokkan baris jadwal per (mentor, type_pertemuan, tanggal, jam mulai, jam selesai) efektif.
+    Data jadwal (topik, catatan, waktu, reschedule, dll) ada di level group;
+    `classes` hanya berisi pembeda tiap jadwal: id_jadwal, kelas, kelompok.
+    Urutan baris input dipertahankan."""
+    grouped = {}
+
+    for row in rows:
+        item = serialize_value(row)
+        key = (
+            item["id_mentor"],
+            item["type_pertemuan"],
+            item["tanggal_efektif"],
+            item["waktu_mulai_efektif"],
+            item["waktu_selesai_efektif"],
+        )
+
+        if key not in grouped:
+            grouped[key] = {
+                "id_jadwal": item["id_jadwal"],
+                "id_mentor": item["id_mentor"],
+                "nama_mentor": item["nama_mentor"],
+                "nickname_mentor": item["nickname_mentor"],
+                "type_pertemuan": item["type_pertemuan"],
+                "target_type": item["target_type"],
+                "topik": item["topik"],
+                "catatan": item["catatan"],
+                "tanggal": item["tanggal"],
+                "waktu_mulai": item["waktu_mulai"],
+                "waktu_selesai": item["waktu_selesai"],
+                "tanggal_reschedule": item["tanggal_reschedule"],
+                "waktu_mulai_reschedule": item["waktu_mulai_reschedule"],
+                "waktu_selesai_reschedule": item["waktu_selesai_reschedule"],
+                "tanggal_efektif": item["tanggal_efektif"],
+                "waktu_mulai_efektif": item["waktu_mulai_efektif"],
+                "waktu_selesai_efektif": item["waktu_selesai_efektif"],
+                "status": item["status"],
+                "is_selesai": item.get("is_selesai"),
+                "count": 0,
+                "classes": [],
+            }
+
+        group = grouped[key]
+
+        # ID jadwal terkecil dipakai sebagai ID representatif group
+        if item["id_jadwal"] < group["id_jadwal"]:
+            group["id_jadwal"] = item["id_jadwal"]
+
+        group["classes"].append({
+            "id_jadwal": item["id_jadwal"],
+            "id_paketkelas": item["id_paketkelas"],
+            "nama_kelas": item["nama_kelas"],
+            "id_kelompok": item["id_kelompok"],
+            "nama_kelompok": item["nama_kelompok"],
+        })
+        group["count"] += 1
+
+    return list(grouped.values())
+
+
+def get_group_all_jadwal_v2(
+    id_mentor=None,
+    id_paketkelas=None,
+    id_kelompok=None,
+    search=None,
+    start_date=None,
+    end_date=None,
+    type_pertemuan=None,
+    page=None,
+    per_page=None,
+    upcoming_first=False,
+):
+    """Daftar jadwal yang sudah di-group per mentor + type_pertemuan + tanggal + jam efektif.
+
+    upcoming_first=True: group yang jam selesainya belum lewat tampil lebih dulu
+    (terdekat -> terjauh), lalu group yang sudah selesai (terbaru -> terlama).
+    Tidak ada data yang disembunyikan, hanya urutannya. False: kronologis naik.
+
+    Filter (search, id_paketkelas, id_kelompok, tanggal) menentukan group mana yang
+    tampil; isi `classes` tiap group tetap memuat SEMUA kelas/kelompok di slot tersebut.
+    Pagination (jika page & per_page diisi) dihitung per group, bukan per baris jadwal.
+    """
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            where_clause = "WHERE j.status = 1"
+            params = {}
+
+            if start_date is not None:
+                where_clause += f" AND {_GROUP_EFEKTIF_TANGGAL} >= :start_date"
+                params["start_date"] = start_date
+
+            if end_date is not None:
+                where_clause += f" AND {_GROUP_EFEKTIF_TANGGAL} <= :end_date"
+                params["end_date"] = end_date
+
+            if id_mentor is not None:
+                where_clause += " AND j.id_mentor = :id_mentor"
+                params["id_mentor"] = id_mentor
+
+            if id_paketkelas is not None:
+                where_clause += " AND j.id_paketkelas = :id_paketkelas"
+                params["id_paketkelas"] = id_paketkelas
+
+            if id_kelompok is not None:
+                where_clause += " AND j.id_kelompok = :id_kelompok"
+                params["id_kelompok"] = id_kelompok
+
+            if type_pertemuan:
+                where_clause += " AND j.type_pertemuan = :type_pertemuan"
+                params["type_pertemuan"] = type_pertemuan
+
+            if search and search.strip():
+                where_clause += """
+                    AND (
+                        u.nama ILIKE :search
+                        OR pk.nama_kelas ILIKE :search
+                        OR kb.nama_kelompok ILIKE :search
+                        OR j.topik ILIKE :search
+                        OR j.catatan ILIKE :search
+                    )
+                """
+                params["search"] = f"%{search.strip()}%"
+
+            groups_cte = f"""
+                groups AS (
+                    SELECT
+                        j.id_mentor,
+                        j.type_pertemuan AS tipe,
+                        {_GROUP_EFEKTIF_TANGGAL} AS tgl,
+                        {_GROUP_EFEKTIF_MULAI} AS mulai,
+                        {_GROUP_EFEKTIF_SELESAI} AS selesai
+                    FROM jadwal_kelas j
+                    {_GROUP_JOINS}
+                    {where_clause}
+                    GROUP BY 1, 2, 3, 4, 5
+                )
+            """
+
+            params["now"] = get_wib()
+
+            chrono = "tgl ASC, mulai ASC, selesai ASC, id_mentor ASC, tipe ASC"
+            if upcoming_first:
+                order_clause = f"""
+                    is_selesai ASC,
+                    CASE WHEN NOT is_selesai THEN tgl + mulai END ASC,
+                    CASE WHEN is_selesai THEN tgl + mulai END DESC,
+                    {chrono}
+                """
+            else:
+                order_clause = chrono
+
+            paginate = page is not None and per_page is not None
+            total = None
+            limit_clause = ""
+
+            if paginate:
+                total = conn.execute(
+                    text(f"WITH {groups_cte} SELECT COUNT(*) FROM groups"),
+                    params
+                ).scalar() or 0
+                limit_clause = "LIMIT :limit OFFSET :offset"
+                params["limit"] = per_page
+                params["offset"] = (page - 1) * per_page
+
+            result = conn.execute(
+                text(f"""
+                    WITH {groups_cte},
+                    flagged AS (
+                        SELECT *, (tgl + selesai) < :now AS is_selesai
+                        FROM groups
+                    ),
+                    paged AS (
+                        SELECT
+                            *,
+                            ROW_NUMBER() OVER (ORDER BY {order_clause}) AS urut
+                        FROM flagged
+                        ORDER BY urut
+                        {limit_clause}
+                    )
+                    SELECT {_GROUP_SELECT_COLUMNS}, g.is_selesai
+                    FROM paged g
+                    JOIN jadwal_kelas j
+                        ON j.id_mentor = g.id_mentor
+                       AND {_GROUP_EFEKTIF_TANGGAL} = g.tgl
+                       AND {_GROUP_EFEKTIF_MULAI} = g.mulai
+                       AND {_GROUP_EFEKTIF_SELESAI} = g.selesai
+                       AND j.type_pertemuan = g.tipe
+                       AND j.status = 1
+                    {_GROUP_JOINS}
+                    ORDER BY
+                        g.urut ASC,
+                        COALESCE(pk.nama_kelas, kb.nama_kelompok) ASC,
+                        j.id_jadwal ASC
+                """),
+                params
+            ).mappings().fetchall()
+
+            data = _build_jadwal_groups(result)
+
+            if not paginate:
+                return data
+
+            return {
+                "data": data,
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "total_pages": (total + per_page - 1) // per_page if total > 0 else 0,
+            }
+
+    except SQLAlchemyError as e:
+        print(f"[get_group_all_jadwal_v2] Error: {e}")
+        raise
+
+
+def get_group_jadwal_by_id_v2(id_jadwal, id_mentor=None):
+    """Detail 1 group jadwal: semua kelas/kelompok milik mentor yang sama
+    pada tanggal + jam efektif yang sama dengan `id_jadwal`.
+    Jika id_mentor diisi, jadwal referensi harus milik mentor tersebut."""
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            mentor_clause = " AND j.id_mentor = :id_mentor" if id_mentor is not None else ""
+            params = {"id_jadwal": id_jadwal}
+            if id_mentor is not None:
+                params["id_mentor"] = id_mentor
+
+            result = conn.execute(
+                text(f"""
+                    WITH ref AS (
+                        SELECT
+                            j.id_mentor,
+                            j.type_pertemuan AS tipe,
+                            {_GROUP_EFEKTIF_TANGGAL} AS tgl,
+                            {_GROUP_EFEKTIF_MULAI} AS mulai,
+                            {_GROUP_EFEKTIF_SELESAI} AS selesai
+                        FROM jadwal_kelas j
+                        WHERE j.id_jadwal = :id_jadwal
+                          AND j.status = 1
+                          {mentor_clause}
+                    )
+                    SELECT {_GROUP_SELECT_COLUMNS}
+                    FROM ref g
+                    JOIN jadwal_kelas j
+                        ON j.id_mentor = g.id_mentor
+                       AND {_GROUP_EFEKTIF_TANGGAL} = g.tgl
+                       AND {_GROUP_EFEKTIF_MULAI} = g.mulai
+                       AND {_GROUP_EFEKTIF_SELESAI} = g.selesai
+                       AND j.type_pertemuan = g.tipe
+                       AND j.status = 1
+                    {_GROUP_JOINS}
+                    ORDER BY
+                        COALESCE(pk.nama_kelas, kb.nama_kelompok) ASC,
+                        j.id_jadwal ASC
+                """),
+                params
+            ).mappings().fetchall()
+
+            groups = _build_jadwal_groups(result)
+            return groups[0] if groups else None
+
+    except SQLAlchemyError as e:
+        print(f"[get_group_jadwal_by_id_v2] Error: {e}")
+        raise
+
+
+# ============================================================================ #
+#                  AKSI GROUP V2 (berlaku untuk semua jadwal 1 group)          #
+# ============================================================================ #
+
+def _get_group_members_v2(conn, id_jadwal, for_update=False):
+    """Ambil semua jadwal aktif dalam group yang sama dengan `id_jadwal`
+    (mentor + type_pertemuan + tanggal + jam mulai + jam selesai efektif)."""
+    lock = "FOR UPDATE OF j" if for_update else ""
+
+    return conn.execute(
+        text(f"""
+            WITH ref AS (
+                SELECT
+                    j.id_mentor,
+                    j.type_pertemuan AS tipe,
+                    {_GROUP_EFEKTIF_TANGGAL} AS tgl,
+                    {_GROUP_EFEKTIF_MULAI} AS mulai,
+                    {_GROUP_EFEKTIF_SELESAI} AS selesai
+                FROM jadwal_kelas j
+                WHERE j.id_jadwal = :id_jadwal
+                  AND j.status = 1
+            )
+            SELECT j.id_jadwal, j.id_paketkelas, j.id_kelompok, j.id_mentor, j.type_pertemuan
+            FROM jadwal_kelas j
+            JOIN ref g
+                ON j.id_mentor = g.id_mentor
+               AND j.type_pertemuan = g.tipe
+               AND {_GROUP_EFEKTIF_TANGGAL} = g.tgl
+               AND {_GROUP_EFEKTIF_MULAI} = g.mulai
+               AND {_GROUP_EFEKTIF_SELESAI} = g.selesai
+            WHERE j.status = 1
+            ORDER BY j.id_jadwal ASC
+            {lock}
+        """),
+        {"id_jadwal": id_jadwal}
+    ).mappings().fetchall()
+
+
+def get_group_members_v2(id_jadwal):
+    """Daftar jadwal (id_jadwal, id_paketkelas, id_kelompok, id_mentor, type_pertemuan)
+    dalam group `id_jadwal`. List kosong jika jadwal tidak ditemukan."""
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            return [dict(row) for row in _get_group_members_v2(conn, id_jadwal)]
+
+    except SQLAlchemyError as e:
+        print(f"[get_group_members_v2] Error: {e}")
+        raise
+
+
+def update_group_jadwal_v2(id_jadwal, payload):
+    """Ubah mentor, topik, catatan, tanggal & jam untuk SEMUA jadwal dalam group.
+    Kelas/kelompok dan type_pertemuan tiap jadwal tidak diubah.
+    Return list id_jadwal yang diubah, atau None jika group tidak ditemukan."""
+    engine = get_connection()
+
+    try:
+        with engine.begin() as conn:
+            members = _get_group_members_v2(conn, id_jadwal, for_update=True)
+            if not members:
+                return None
+
+            ids = [row["id_jadwal"] for row in members]
+
+            conn.execute(text("""
+                UPDATE jadwal_kelas
+                SET
+                    id_mentor = :id_mentor,
+                    topik = :topik,
+                    catatan = :catatan,
+                    tanggal = :tanggal,
+                    waktu_mulai = :waktu_mulai,
+                    waktu_selesai = :waktu_selesai,
+                    updated_by = :updated_by,
+                    updated_at = :now
+                WHERE id_jadwal = ANY(:ids)
+                  AND status = 1
+            """), {**payload, "ids": ids, "now": get_wib()})
+
+            return ids
+
+    except SQLAlchemyError as e:
+        print(f"[update_group_jadwal_v2] Error: {e}")
+        raise
+
+
+def reschedule_group_jadwal_v2(id_jadwal, payload):
+    """Reschedule SEMUA jadwal dalam group. Return list id_jadwal atau None."""
+    engine = get_connection()
+
+    try:
+        with engine.begin() as conn:
+            members = _get_group_members_v2(conn, id_jadwal, for_update=True)
+            if not members:
+                return None
+
+            ids = [row["id_jadwal"] for row in members]
+
+            conn.execute(text("""
+                UPDATE jadwal_kelas
+                SET
+                    tanggal_reschedule = :tanggal_reschedule,
+                    waktu_mulai_reschedule = :waktu_mulai_reschedule,
+                    waktu_selesai_reschedule = :waktu_selesai_reschedule,
+                    updated_by = :updated_by,
+                    updated_at = :now
+                WHERE id_jadwal = ANY(:ids)
+                  AND status = 1
+            """), {**payload, "ids": ids, "now": get_wib()})
+
+            return ids
+
+    except SQLAlchemyError as e:
+        print(f"[reschedule_group_jadwal_v2] Error: {e}")
+        raise
+
+
+def delete_group_jadwal_v2(id_jadwal, id_user):
+    """Soft delete SEMUA jadwal dalam group. Return list id_jadwal atau None."""
+    engine = get_connection()
+
+    try:
+        with engine.begin() as conn:
+            members = _get_group_members_v2(conn, id_jadwal, for_update=True)
+            if not members:
+                return None
+
+            ids = [row["id_jadwal"] for row in members]
+
+            conn.execute(text("""
+                UPDATE jadwal_kelas
+                SET
+                    status = 0,
+                    updated_by = :updated_by,
+                    updated_at = :now
+                WHERE id_jadwal = ANY(:ids)
+                  AND status = 1
+            """), {"ids": ids, "updated_by": id_user, "now": get_wib()})
+
+            return ids
+
+    except SQLAlchemyError as e:
+        print(f"[delete_group_jadwal_v2] Error: {e}")
+        raise
+
+
+def switch_mentor_group_jadwal_v2(id_jadwal_1, id_jadwal_2, id_user):
+    """Tukar mentor antar 2 group: semua jadwal group 1 diberi mentor group 2
+    dan sebaliknya. Return dict ringkasan, None jika salah satu group tidak
+    ditemukan, atau "SAME_GROUP" jika kedua ID berada di group yang sama."""
+    engine = get_connection()
+
+    try:
+        with engine.begin() as conn:
+            group_1 = _get_group_members_v2(conn, id_jadwal_1, for_update=True)
+            group_2 = _get_group_members_v2(conn, id_jadwal_2, for_update=True)
+
+            if not group_1 or not group_2:
+                return None
+
+            ids_1 = [row["id_jadwal"] for row in group_1]
+            ids_2 = [row["id_jadwal"] for row in group_2]
+
+            if set(ids_1) & set(ids_2):
+                return "SAME_GROUP"
+
+            mentor_1 = group_1[0]["id_mentor"]
+            mentor_2 = group_2[0]["id_mentor"]
+            now = get_wib()
+
+            update_sql = text("""
+                UPDATE jadwal_kelas
+                SET
+                    id_mentor = :id_mentor,
+                    updated_by = :updated_by,
+                    updated_at = :now
+                WHERE id_jadwal = ANY(:ids)
+                  AND status = 1
+            """)
+
+            conn.execute(update_sql, {"ids": ids_1, "id_mentor": mentor_2, "updated_by": id_user, "now": now})
+            conn.execute(update_sql, {"ids": ids_2, "id_mentor": mentor_1, "updated_by": id_user, "now": now})
+
+            return {
+                "id_jadwal_1": ids_1,
+                "id_mentor_1": mentor_2,
+                "id_jadwal_2": ids_2,
+                "id_mentor_2": mentor_1,
+            }
+
+    except SQLAlchemyError as e:
+        print(f"[switch_mentor_group_jadwal_v2] Error: {e}")
+        raise
+
+
 def get_group_all_jadwal_by_mentor(
     id_mentor,
     search=None,

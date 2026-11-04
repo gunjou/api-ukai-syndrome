@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -1297,3 +1299,304 @@ def insert_absensi_peserta_checkin(payload):
     except SQLAlchemyError as e:
         print(f"[insert_absensi_peserta_checkin] Error: {e}")
         return None
+
+
+
+# ============================================================================ #
+#              #ANCHOR - ABSENSI MENTOR GROUP V2 (PER SLOT JADWAL)             #
+# ============================================================================ #
+# 1 group = mentor + type_pertemuan + tanggal + jam mulai + jam selesai efektif.
+# Tidak mempengaruhi query/endpoint absensi yang lama.
+
+_ABSENSI_GROUP_TGL = "COALESCE(j.tanggal_reschedule, j.tanggal)"
+_ABSENSI_GROUP_MULAI = "COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai)"
+_ABSENSI_GROUP_SELESAI = "COALESCE(j.waktu_selesai_reschedule, j.waktu_selesai)"
+
+
+def _build_absensi_groups(rows):
+    """Kelompokkan baris absensi mentor per slot. Data jadwal & mentor ada di level
+    group; `classes` berisi kelas/kelompok + status check-in/out masing-masing."""
+    grouped = {}
+
+    for row in rows:
+        item = serialize_value(row)
+        key = (
+            item["id_mentor"],
+            item["type_pertemuan"],
+            item["tanggal"],
+            item["waktu_mulai"],
+            item["waktu_selesai"],
+        )
+
+        if key not in grouped:
+            grouped[key] = {
+                "id_jadwal": item["id_jadwal"],
+                "id_mentor": item["id_mentor"],
+                "nama_mentor": item["nama_mentor"],
+                "nickname_mentor": item["nickname_mentor"],
+                "type_pertemuan": item["type_pertemuan"],
+                "topik": item["topik"],
+                "catatan": item["catatan"],
+                "tanggal": item["tanggal"],
+                "waktu_mulai": item["waktu_mulai"],
+                "waktu_selesai": item["waktu_selesai"],
+                "check_in_at": None,
+                "check_out_at": None,
+                "count": 0,
+                "count_check_in": 0,
+                "count_check_out": 0,
+                "classes": [],
+            }
+
+        group = grouped[key]
+
+        if item["id_jadwal"] < group["id_jadwal"]:
+            group["id_jadwal"] = item["id_jadwal"]
+
+        group["classes"].append({
+            "id_jadwal": item["id_jadwal"],
+            "id_absensi_mentor": item["id_absensi_mentor"],
+            "id_paketkelas": item["id_paketkelas"],
+            "nama_kelas": item["nama_kelas"],
+            "id_kelompok": item["id_kelompok"],
+            "nama_kelompok": item["nama_kelompok"],
+            "check_in_at": item["check_in_at"],
+            "check_out_at": item["check_out_at"],
+        })
+
+        group["count"] += 1
+
+        if item["check_in_at"]:
+            group["count_check_in"] += 1
+            if not group["check_in_at"] or item["check_in_at"] < group["check_in_at"]:
+                group["check_in_at"] = item["check_in_at"]
+
+        if item["check_out_at"]:
+            group["count_check_out"] += 1
+            if not group["check_out_at"] or item["check_out_at"] > group["check_out_at"]:
+                group["check_out_at"] = item["check_out_at"]
+
+    groups = list(grouped.values())
+
+    # check_out_at group hanya terisi jika semua kelas sudah check-out
+    for group in groups:
+        if group["count_check_out"] < group["count"]:
+            group["check_out_at"] = None
+
+    return groups
+
+
+def get_group_absensi_mentor_v2(tanggal=None, type_pertemuan=None, search=None, id_jadwal=None):
+    """Daftar absensi mentor yang sudah di-group per slot jadwal.
+    id_jadwal diisi -> hanya group yang berisi jadwal tsb (untuk detail)."""
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            where_clause = """
+                WHERE am.status = 1
+                  AND (pk.id_paketkelas IS NOT NULL OR kb.id_kelompok IS NOT NULL)
+            """
+            params = {}
+
+            if tanggal is not None:
+                where_clause += f" AND {_ABSENSI_GROUP_TGL} = :tanggal"
+                params["tanggal"] = tanggal
+
+            if type_pertemuan:
+                where_clause += " AND j.type_pertemuan = :type_pertemuan"
+                params["type_pertemuan"] = type_pertemuan
+
+            if id_jadwal is not None:
+                where_clause += f"""
+                    AND (am.id_mentor, j.type_pertemuan, {_ABSENSI_GROUP_TGL},
+                         {_ABSENSI_GROUP_MULAI}, {_ABSENSI_GROUP_SELESAI}) = (
+                        SELECT
+                            am2.id_mentor, j2.type_pertemuan,
+                            COALESCE(j2.tanggal_reschedule, j2.tanggal),
+                            COALESCE(j2.waktu_mulai_reschedule, j2.waktu_mulai),
+                            COALESCE(j2.waktu_selesai_reschedule, j2.waktu_selesai)
+                        FROM absensi_mentor am2
+                        INNER JOIN jadwal_kelas j2
+                            ON j2.id_jadwal = am2.id_jadwal
+                           AND j2.status = 1
+                        WHERE am2.id_jadwal = :id_jadwal
+                          AND am2.status = 1
+                        LIMIT 1
+                    )
+                """
+                params["id_jadwal"] = id_jadwal
+
+            group_filter = ""
+            if search and search.strip():
+                # Group tampil jika salah satu kelas/kelompok/mentor/topik cocok;
+                # isi group tetap lengkap.
+                group_filter = f"""
+                    AND (am.id_mentor, j.type_pertemuan, {_ABSENSI_GROUP_TGL},
+                         {_ABSENSI_GROUP_MULAI}, {_ABSENSI_GROUP_SELESAI}) IN (
+                        SELECT
+                            am3.id_mentor, j3.type_pertemuan,
+                            COALESCE(j3.tanggal_reschedule, j3.tanggal),
+                            COALESCE(j3.waktu_mulai_reschedule, j3.waktu_mulai),
+                            COALESCE(j3.waktu_selesai_reschedule, j3.waktu_selesai)
+                        FROM absensi_mentor am3
+                        INNER JOIN jadwal_kelas j3
+                            ON j3.id_jadwal = am3.id_jadwal
+                           AND j3.status = 1
+                        LEFT JOIN paketkelas pk3 ON pk3.id_paketkelas = j3.id_paketkelas
+                        LEFT JOIN kelompok_belajar kb3 ON kb3.id_kelompok = j3.id_kelompok
+                        LEFT JOIN users u3 ON u3.id_user = am3.id_mentor
+                        WHERE am3.status = 1
+                          AND (
+                              pk3.nama_kelas ILIKE :search
+                              OR kb3.nama_kelompok ILIKE :search
+                              OR u3.nama ILIKE :search
+                              OR u3.nickname ILIKE :search
+                              OR j3.topik ILIKE :search
+                          )
+                    )
+                """
+                params["search"] = f"%{search.strip()}%"
+
+            result = conn.execute(text(f"""
+                SELECT
+                    am.id_absensi_mentor, am.id_jadwal,
+                    j.id_paketkelas, pk.nama_kelas,
+                    j.id_kelompok, kb.nama_kelompok,
+                    am.id_mentor, u.nama AS nama_mentor, u.nickname AS nickname_mentor,
+                    j.topik, j.catatan,
+                    {_ABSENSI_GROUP_TGL} AS tanggal,
+                    {_ABSENSI_GROUP_MULAI} AS waktu_mulai,
+                    {_ABSENSI_GROUP_SELESAI} AS waktu_selesai,
+                    j.type_pertemuan,
+                    am.check_in_at, am.check_out_at
+                FROM absensi_mentor am
+                INNER JOIN jadwal_kelas j
+                    ON j.id_jadwal = am.id_jadwal
+                   AND j.status = 1
+                LEFT JOIN paketkelas pk
+                    ON pk.id_paketkelas = j.id_paketkelas
+                   AND pk.status = 1
+                LEFT JOIN kelompok_belajar kb
+                    ON kb.id_kelompok = j.id_kelompok
+                   AND kb.status = 1
+                INNER JOIN users u
+                    ON u.id_user = am.id_mentor
+                   AND u.status = 1
+                {where_clause}
+                {group_filter}
+                ORDER BY
+                    {_ABSENSI_GROUP_TGL} DESC,
+                    {_ABSENSI_GROUP_MULAI} DESC,
+                    {_ABSENSI_GROUP_SELESAI} DESC,
+                    am.id_mentor ASC,
+                    j.type_pertemuan ASC,
+                    COALESCE(pk.nama_kelas, kb.nama_kelompok) ASC,
+                    am.id_jadwal ASC
+            """), params).mappings().fetchall()
+
+            return _build_absensi_groups(result)
+
+    except SQLAlchemyError as e:
+        print(f"[get_group_absensi_mentor_v2] Error: {e}")
+        raise
+
+
+def checkout_group_absensi_mentor_v2(id_jadwal, jam_check_out, now):
+    """Check-out manual oleh admin untuk SEMUA absensi mentor dalam 1 group
+    (slot yang sama dengan `id_jadwal`) yang sudah check-in tapi belum check-out.
+
+    Tanggal check-out mengikuti tanggal check-in masing-masing absensi.
+    Semua berhasil atau tidak sama sekali (1 transaksi).
+
+    Return (result, error):
+      - result: {"id_absensi_mentor": [...], "total": n}
+      - error : (kode, data) -> "NOT_FOUND" | "NOTHING_TO_CHECKOUT"
+                | "BEFORE_CHECK_IN" | "AFTER_NOW"
+    """
+    engine = get_connection()
+
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(text(f"""
+                WITH ref AS (
+                    SELECT
+                        am.id_mentor,
+                        j.type_pertemuan AS tipe,
+                        {_ABSENSI_GROUP_TGL} AS tgl,
+                        {_ABSENSI_GROUP_MULAI} AS mulai,
+                        {_ABSENSI_GROUP_SELESAI} AS selesai
+                    FROM absensi_mentor am
+                    INNER JOIN jadwal_kelas j
+                        ON j.id_jadwal = am.id_jadwal
+                       AND j.status = 1
+                    WHERE am.id_jadwal = :id_jadwal
+                      AND am.status = 1
+                    LIMIT 1
+                )
+                SELECT am.id_absensi_mentor, am.id_jadwal, am.check_in_at, am.check_out_at
+                FROM absensi_mentor am
+                INNER JOIN jadwal_kelas j
+                    ON j.id_jadwal = am.id_jadwal
+                   AND j.status = 1
+                INNER JOIN ref g
+                    ON am.id_mentor = g.id_mentor
+                   AND j.type_pertemuan = g.tipe
+                   AND {_ABSENSI_GROUP_TGL} = g.tgl
+                   AND {_ABSENSI_GROUP_MULAI} = g.mulai
+                   AND {_ABSENSI_GROUP_SELESAI} = g.selesai
+                WHERE am.status = 1
+                ORDER BY am.id_absensi_mentor ASC
+                FOR UPDATE OF am
+            """), {"id_jadwal": id_jadwal}).mappings().fetchall()
+
+            if not rows:
+                return None, ("NOT_FOUND", None)
+
+            pending = [
+                row for row in rows
+                if row["check_in_at"] is not None and row["check_out_at"] is None
+            ]
+
+            if not pending:
+                return None, ("NOTHING_TO_CHECKOUT", None)
+
+            updates = []
+            for row in pending:
+                check_out_at = datetime.combine(row["check_in_at"].date(), jam_check_out)
+
+                if check_out_at <= row["check_in_at"]:
+                    return None, ("BEFORE_CHECK_IN", {
+                        "id_jadwal": row["id_jadwal"],
+                        "check_in_at": row["check_in_at"].strftime("%Y-%m-%d %H:%M:%S"),
+                    })
+
+                if check_out_at > now:
+                    return None, ("AFTER_NOW", None)
+
+                updates.append({
+                    "id_absensi": row["id_absensi_mentor"],
+                    "check_out_at": check_out_at,
+                    "now": now,
+                })
+
+            for payload in updates:
+                conn.execute(text("""
+                    UPDATE absensi_mentor
+                    SET
+                        check_out_at = :check_out_at,
+                        updated_at = :now
+                    WHERE id_absensi_mentor = :id_absensi
+                      AND status = 1
+                      AND check_in_at IS NOT NULL
+                      AND check_out_at IS NULL
+                """), payload)
+
+            return {
+                "id_absensi_mentor": [p["id_absensi"] for p in updates],
+                "total": len(updates),
+            }, None
+
+    except SQLAlchemyError as e:
+        print(f"[checkout_group_absensi_mentor_v2] Error: {e}")
+        raise
