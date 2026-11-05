@@ -1847,6 +1847,12 @@ class JadwalBulkValidateResource(Resource):
                 }
             }, 200
 
+        except ValueError as e:
+            return {
+                "status": "error",
+                "message": str(e)
+            }, 400
+
         except SQLAlchemyError as e:
             print(
                 f"[POST /jadwal/bulk/validate] "

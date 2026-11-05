@@ -1,9 +1,11 @@
 import os
+import re
 import uuid
 import tempfile
+import numbers
 
 from io import BytesIO
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -18,6 +20,14 @@ from ..utils.config import get_connection, get_wib
 # ============================================================================ #
 #                                #ANCHOR - HELPER                              #
 # ============================================================================ #
+
+# Epoch serial Excel (sudah memperhitungkan bug leap year 1900)
+EXCEL_EPOCH = date(1899, 12, 30)
+
+# Rentang serial yang diterima sebagai tanggal
+EXCEL_SERIAL_MIN = 20000
+EXCEL_SERIAL_MAX = 80000
+
 
 def normalize_text(value):
     """
@@ -55,8 +65,47 @@ def normalize_type_pertemuan(value):
     return value.upper()
 
 
+def is_bulk_number(value):
+    return (
+        isinstance(value, numbers.Real)
+        and not isinstance(value, bool)
+    )
+
+
+def excel_serial_to_date(serial):
+    """
+    Konversi nomor serial Excel menjadi date.
+
+    Di luar rentang yang diizinkan dianggap bukan tanggal,
+    agar angka acak tidak berubah menjadi tanggal.
+    """
+
+    if not (
+        EXCEL_SERIAL_MIN <= serial <= EXCEL_SERIAL_MAX
+    ):
+        return None
+
+    return EXCEL_EPOCH + timedelta(days=int(serial))
+
+
+def minutes_to_time(total_minutes):
+    """
+    Konversi jumlah menit menjadi time, dibulatkan ke menit terdekat.
+
+    Contoh: 0.797222 hari = 1147.99968 menit menjadi 19:08, bukan 19:07:59.
+    """
+
+    total_minutes = int(round(total_minutes)) % (24 * 60)
+
+    return time(total_minutes // 60, total_minutes % 60)
+
+
 def parse_bulk_date(value):
     if value is None:
+        return None
+
+    # pd.NaT termasuk subclass datetime, jadi NA harus dicek paling awal
+    if pd.isna(value):
         return None
 
     if isinstance(value, datetime):
@@ -65,8 +114,9 @@ def parse_bulk_date(value):
     if isinstance(value, date):
         return value
 
-    if pd.isna(value):
-        return None
+    # Serial Excel numerik
+    if is_bulk_number(value):
+        return excel_serial_to_date(value)
 
     value = str(value).strip()
 
@@ -86,31 +136,34 @@ def parse_bulk_date(value):
         except ValueError:
             continue
 
-    return None
+    # Serial Excel dalam bentuk string ("46330", "46330.0")
+    try:
+        return excel_serial_to_date(float(value))
+    except ValueError:
+        return None
 
 
 def parse_bulk_time(value):
     if value is None:
         return None
 
+    # pd.NaT termasuk subclass datetime, jadi NA harus dicek paling awal
+    if pd.isna(value):
+        return None
+
     if isinstance(value, time):
-        return value
+        return value.replace(microsecond=0)
 
     if isinstance(value, datetime):
         return value.time().replace(microsecond=0)
 
-    if pd.isna(value):
-        return None
+    # Calamine bisa mengembalikan timedelta (pd.Timedelta subclass timedelta)
+    if isinstance(value, timedelta):
+        return minutes_to_time(value.total_seconds() / 60)
 
     # Excel terkadang memberikan fractional day
-    if isinstance(value, (float, int)):
-        total_seconds = int(round(float(value) * 24 * 60 * 60))
-
-        hours = (total_seconds // 3600) % 24
-        minutes = (total_seconds % 3600) // 60
-        seconds = total_seconds % 60
-
-        return time(hours, minutes, seconds)
+    if is_bulk_number(value):
+        return minutes_to_time(float(value) * 24 * 60)
 
     value = str(value).strip()
 
@@ -124,6 +177,23 @@ def parse_bulk_time(value):
             return datetime.strptime(value, fmt).time()
         except ValueError:
             continue
+
+    # Format "13.00". Awalan "0." sengaja dilewati karena itu pecahan hari
+    # ("0.25" = 06:00); %M juga menerima 1 digit, jadi menit dicek 2 digit.
+    if re.fullmatch(r"(?!0\.)\d{1,2}\.\d{2}", value):
+        try:
+            return datetime.strptime(value, "%H.%M").time()
+        except ValueError:
+            return None
+
+    # Pecahan hari dalam bentuk string ("0.5416666")
+    try:
+        fraction = float(value)
+    except ValueError:
+        return None
+
+    if 0 <= fraction < 1:
+        return minutes_to_time(fraction * 24 * 60)
 
     return None
 
@@ -153,11 +223,40 @@ def read_bulk_jadwal_file(file):
 
     if filename.endswith(".xlsx"):
 
-        df = pd.read_excel(
-            file_stream,
-            engine="openpyxl",
-            dtype=object
-        )
+        try:
+            df = pd.read_excel(
+                file_stream,
+                engine="openpyxl",
+                dtype=object
+            )
+
+        except Exception as e:
+            # Umumnya xl/styles.xml rusak/tidak standar (WPS, Excel mobile,
+            # ekspor aplikasi lain) padahal datanya valid
+            print(f"[read_bulk_jadwal_file] openpyxl gagal: {e}")
+
+            file_stream.seek(0)
+
+            try:
+                df = pd.read_excel(
+                    file_stream,
+                    engine="calamine",
+                    dtype=object
+                )
+
+            except Exception as fallback_error:
+                print(
+                    "[read_bulk_jadwal_file] calamine gagal: "
+                    f"{fallback_error}"
+                )
+
+                raise ValueError(
+                    "File XLSX tidak dapat dibaca. Coba simpan ulang "
+                    "file ke workbook baru atau gunakan format CSV."
+                ) from fallback_error
+
+        # Buang baris yang seluruh kolomnya kosong
+        df = df.dropna(how="all").reset_index(drop=True)
 
     elif filename.endswith(".csv"):
 
@@ -327,9 +426,10 @@ def get_existing_jadwal_for_bulk():
                 id_paketkelas,
                 id_kelompok,
                 id_mentor,
-                tanggal,
-                waktu_mulai,
-                waktu_selesai
+                type_pertemuan,
+                COALESCE(tanggal_reschedule, tanggal) AS tanggal,
+                COALESCE(waktu_mulai_reschedule, waktu_mulai) AS waktu_mulai,
+                COALESCE(waktu_selesai_reschedule, waktu_selesai) AS waktu_selesai
             FROM jadwal_kelas
             WHERE status = 1
         """)).mappings().fetchall()
@@ -339,6 +439,28 @@ def get_existing_jadwal_for_bulk():
 
 def is_time_overlap(start_a, end_a, start_b, end_b):
     return (start_a < end_b and end_a > start_b)
+
+
+def is_bulk_mentor_conflict(type_a, start_a, end_a, type_b, start_b, end_b):
+    """
+    Cek bentrok dua jadwal milik mentor yang sama pada tanggal yang sama.
+
+    Type pertemuan dan jam yang sama persis bukan bentrok, karena
+    jadwal tersebut menjadi satu group (ditangani endpoint group).
+    """
+
+    if (
+        type_a == type_b
+        and start_a == start_b
+        and end_a == end_b
+    ):
+        return False
+
+    return is_time_overlap(start_a, end_a, start_b, end_b)
+
+
+def format_time_range(start, end):
+    return f"{start.strftime('%H:%M')}\u2013{end.strftime('%H:%M')}"
 
 
 
@@ -558,7 +680,14 @@ def validate_bulk_jadwal(file, filename, id_user):
         )
         mentor_kelas_mapping = get_bulk_mentor_kelas_mapping()
 
-        existing_jadwal = get_existing_jadwal_for_bulk()
+        # Index jadwal existing per mentor + tanggal efektif
+        existing_jadwal_index = {}
+
+        for existing in get_existing_jadwal_for_bulk():
+            existing_jadwal_index.setdefault(
+                (existing["id_mentor"], existing["tanggal"]),
+                []
+            ).append(existing)
 
         # ================================================================ #
         # VALIDATION RESULT
@@ -574,6 +703,9 @@ def validate_bulk_jadwal(file, filename, id_user):
 
         # Untuk duplicate di dalam file
         file_schedule_keys = {}
+
+        # Untuk bentrok mentor di dalam file (per mentor + tanggal)
+        file_mentor_slots = {}
 
         # ================================================================ #
         # LOOP ROW
@@ -868,8 +1000,13 @@ def validate_bulk_jadwal(file, filename, id_user):
                     waktu_selesai
                 )
 
+                mentor_date_key = (
+                    id_mentor,
+                    tanggal
+                )
+
                 # -------------------------------------------------------- #
-                # Duplicate dalam file
+                # Duplicate / bentrok mentor dalam file
                 # -------------------------------------------------------- #
 
                 if schedule_key in file_schedule_keys:
@@ -892,56 +1029,96 @@ def validate_bulk_jadwal(file, filename, id_user):
                         schedule_key
                     ] = row_number
 
-                # -------------------------------------------------------- #
-                # Duplicate / conflict dengan DB
-                # -------------------------------------------------------- #
-
-                for existing in existing_jadwal:
-
-                    existing_target = (
-                        ("KELAS", existing["id_paketkelas"])
-                        if existing["id_paketkelas"] is not None
-                        else ("KELOMPOK", existing["id_kelompok"])
+                    mentor_slots = file_mentor_slots.setdefault(
+                        mentor_date_key,
+                        []
                     )
 
-                    if (
-                        existing_target
-                        == target
-                        and existing["id_mentor"]
-                        == id_mentor
-                        and existing["tanggal"]
-                        == tanggal
-                    ):
+                    for (
+                        slot_row,
+                        slot_type,
+                        slot_mulai,
+                        slot_selesai
+                    ) in mentor_slots:
 
-                        # Exact duplicate
-                        if (
-                            existing["waktu_mulai"]
-                            == waktu_mulai
-                            and existing["waktu_selesai"]
-                            == waktu_selesai
+                        if is_bulk_mentor_conflict(
+                            type_pertemuan,
+                            waktu_mulai,
+                            waktu_selesai,
+                            slot_type,
+                            slot_mulai,
+                            slot_selesai
                         ):
                             row_errors.append({
                                 "field": "jadwal",
                                 "message": (
-                                    "Jadwal sudah terdaftar "
-                                    "di database"
+                                    "Mentor bentrok dengan "
+                                    f"row {slot_row} di dalam file "
+                                    f"({format_time_range(slot_mulai, slot_selesai)})"
                                 )
                             })
 
                             break
 
-                        # Mentor conflict
-                        if is_time_overlap(
+                    mentor_slots.append((
+                        row_number,
+                        type_pertemuan,
+                        waktu_mulai,
+                        waktu_selesai
+                    ))
+
+                # -------------------------------------------------------- #
+                # Duplicate / bentrok mentor dengan DB
+                # -------------------------------------------------------- #
+
+                existing_slots = existing_jadwal_index.get(
+                    mentor_date_key,
+                    []
+                )
+
+                # Duplikat dicek lebih dulu agar tidak dilaporkan sebagai bentrok
+                is_db_duplicate = any(
+                    (
+                        ("KELAS", existing["id_paketkelas"])
+                        if existing["id_paketkelas"] is not None
+                        else ("KELOMPOK", existing["id_kelompok"])
+                    ) == target
+                    and existing["waktu_mulai"] == waktu_mulai
+                    and existing["waktu_selesai"] == waktu_selesai
+                    for existing in existing_slots
+                )
+
+                if is_db_duplicate:
+                    row_errors.append({
+                        "field": "jadwal",
+                        "message": (
+                            "Jadwal sudah terdaftar "
+                            "di database"
+                        )
+                    })
+
+                else:
+                    for existing in existing_slots:
+
+                        if is_bulk_mentor_conflict(
+                            type_pertemuan,
                             waktu_mulai,
                             waktu_selesai,
+                            existing["type_pertemuan"],
                             existing["waktu_mulai"],
                             existing["waktu_selesai"]
                         ):
+                            existing_range = format_time_range(
+                                existing["waktu_mulai"],
+                                existing["waktu_selesai"]
+                            )
+
                             row_errors.append({
                                 "field": "jadwal",
                                 "message": (
-                                    "Jadwal bentrok dengan "
-                                    "jadwal mentor yang sudah ada"
+                                    "Mentor bentrok dengan jadwal di database "
+                                    f"(id_jadwal {existing['id_jadwal']}, "
+                                    f"{existing_range})"
                                 )
                             })
 
