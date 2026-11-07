@@ -24,6 +24,9 @@ ABSENSI_RADIUS_METER = float(os.getenv("ABSENSI_RADIUS_METER", 100))
 # Batas akurasi GPS peserta yang masih diterima (meter)
 ABSENSI_MAX_GPS_ACCURACY = float(os.getenv("ABSENSI_MAX_GPS_ACCURACY", 100))
 
+# Nilai tetap accuracy mentor (meter), juga menjadi radius check-out mentor
+ABSENSI_MENTOR_ACCURACY = 100.0
+
 
 # ============================================================================ #
 #                                #ANCHOR - MODEL                               #
@@ -249,14 +252,7 @@ class AbsensiMentorCheckInResource(Resource):
                         )
                     }, 400
 
-                if accuracy is None:
-                    return {
-                        "status": "error",
-                        "message": (
-                            "Accuracy GPS wajib "
-                            "untuk pertemuan offline"
-                        )
-                    }, 400
+                accuracy = ABSENSI_MENTOR_ACCURACY
 
                 if not image_file:
                     return {
@@ -422,11 +418,7 @@ class AbsensiMentorCheckOutResource(Resource):
                         "message": "Latitude dan longitude wajib untuk pertemuan offline"
                     }, 400
 
-                if accuracy is None:
-                    return {
-                        "status": "error",
-                        "message": "Accuracy GPS wajib untuk pertemuan offline"
-                    }, 400
+                accuracy = ABSENSI_MENTOR_ACCURACY
 
                 if not image_file:
                     return {
