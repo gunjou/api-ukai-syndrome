@@ -370,8 +370,10 @@ def get_absensi_mentor_for_checkout(id_jadwal, id_mentor):
             result = conn.execute(text("""
                 SELECT
                     am.id_absensi_mentor, am.id_jadwal, am.id_mentor, am.check_in_at,
-                    am.check_in_latitude, am.check_in_longitude, am.check_in_accuracy, am.check_out_at, 
-                    j.type_pertemuan
+                    am.check_in_latitude, am.check_in_longitude, am.check_in_accuracy, am.check_out_at,
+                    j.type_pertemuan,
+                    COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
+                    COALESCE(j.waktu_selesai_reschedule, j.waktu_selesai) AS waktu_selesai_efektif
                 FROM absensi_mentor am
                 INNER JOIN jadwal_kelas j
                     ON j.id_jadwal = am.id_jadwal

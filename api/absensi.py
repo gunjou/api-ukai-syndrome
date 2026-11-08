@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+from math import isfinite
 import os
 
 import requests
@@ -24,8 +25,63 @@ ABSENSI_RADIUS_METER = float(os.getenv("ABSENSI_RADIUS_METER", 100))
 # Batas akurasi GPS peserta yang masih diterima (meter)
 ABSENSI_MAX_GPS_ACCURACY = float(os.getenv("ABSENSI_MAX_GPS_ACCURACY", 100))
 
-# Nilai tetap accuracy mentor (meter), juga menjadi radius check-out mentor
+# Accuracy mentor (meter) bila perangkat tidak mengirimkannya
 ABSENSI_MENTOR_ACCURACY = 100.0
+
+# Batas radius check-out mentor (meter), sekaligus batas akurasi GPS yang diterima
+ABSENSI_MENTOR_MAX_RADIUS = 300.0
+
+ABSENSI_MENTOR_MIN_DURASI = timedelta(hours=2)
+
+# Check-in kolektif tersimpan beberapa detik berselang; jangan gagalkan jadwal terakhirnya
+ABSENSI_MENTOR_DURASI_GRACE = timedelta(minutes=1)
+
+
+def validate_mentor_location(latitude, longitude, accuracy):
+    if (
+        not all(isfinite(value) for value in (latitude, longitude, accuracy))
+        or not -90 <= latitude <= 90
+        or not -180 <= longitude <= 180
+        or accuracy < 0
+    ):
+        return {"status": "error", "message": "Koordinat lokasi tidak valid"}, 400
+
+    if accuracy > ABSENSI_MENTOR_MAX_RADIUS:
+        return {
+            "status": "error",
+            "message": (
+                f"Akurasi GPS terlalu rendah ({accuracy:.0f} m), "
+                "pindah ke area terbuka lalu ambil lokasi ulang"
+            ),
+            "data": {
+                "accuracy": accuracy,
+                "max_accuracy": ABSENSI_MENTOR_MAX_RADIUS
+            }
+        }, 400
+
+    return None
+
+
+def get_checkout_radius(check_in_accuracy, check_out_accuracy):
+    if check_in_accuracy is None:
+        check_in_accuracy = ABSENSI_MENTOR_ACCURACY
+
+    return min(
+        ABSENSI_MENTOR_MAX_RADIUS,
+        ABSENSI_RADIUS_METER + check_in_accuracy + check_out_accuracy
+    )
+
+
+def get_earliest_checkout(absensi):
+    earliest = datetime.fromisoformat(absensi["check_in_at"]) + ABSENSI_MENTOR_MIN_DURASI
+
+    if absensi.get("tanggal_efektif") and absensi.get("waktu_selesai_efektif"):
+        schedule_end = datetime.fromisoformat(
+            f"{absensi['tanggal_efektif']}T{absensi['waktu_selesai_efektif']}"
+        )
+        earliest = min(earliest, schedule_end)
+
+    return earliest - ABSENSI_MENTOR_DURASI_GRACE
 
 
 # ============================================================================ #
@@ -252,7 +308,13 @@ class AbsensiMentorCheckInResource(Resource):
                         )
                     }, 400
 
-                accuracy = ABSENSI_MENTOR_ACCURACY
+                if accuracy is None:
+                    accuracy = ABSENSI_MENTOR_ACCURACY
+
+                location_error = validate_mentor_location(latitude, longitude, accuracy)
+
+                if location_error:
+                    return location_error
 
                 if not image_file:
                     return {
@@ -406,6 +468,14 @@ class AbsensiMentorCheckOutResource(Resource):
             if absensi["check_out_at"]:
                 return {"status": "error", "message": "Mentor sudah melakukan check-out"}, 400
 
+            earliest_checkout = get_earliest_checkout(absensi)
+
+            if get_wib().replace(tzinfo=None) < earliest_checkout:
+                return {
+                    "status": "error",
+                    "message": f"Check-out baru dapat dilakukan pukul {earliest_checkout.strftime('%H:%M')} WIB"
+                }, 400
+
             latitude = data.get("latitude")
             longitude = data.get("longitude")
             accuracy = data.get("accuracy")
@@ -418,7 +488,13 @@ class AbsensiMentorCheckOutResource(Resource):
                         "message": "Latitude dan longitude wajib untuk pertemuan offline"
                     }, 400
 
-                accuracy = ABSENSI_MENTOR_ACCURACY
+                if accuracy is None:
+                    accuracy = ABSENSI_MENTOR_ACCURACY
+
+                location_error = validate_mentor_location(latitude, longitude, accuracy)
+
+                if location_error:
+                    return location_error
 
                 if not image_file:
                     return {
@@ -437,14 +513,27 @@ class AbsensiMentorCheckOutResource(Resource):
                         latitude,
                         longitude
                     )
+                    radius = get_checkout_radius(check_in_accuracy, accuracy)
 
-                    if check_in_accuracy is not None and distance > check_in_accuracy:
+                    if distance > radius:
+                        print(
+                            "[POST /absensi/mentor/check-out] Di luar radius: "
+                            f"id_jadwal={id_jadwal} id_mentor={id_mentor} "
+                            f"distance={distance:.2f} radius={radius} "
+                            f"check_in_accuracy={check_in_accuracy} accuracy={accuracy}"
+                        )
+
                         return {
                             "status": "error",
-                            "message": "Lokasi checkout berada di luar radius lokasi check-in",
+                            "message": (
+                                "Lokasi checkout berada di luar radius lokasi check-in "
+                                f"(jarak {distance:.0f} m, batas {radius:.0f} m, "
+                                f"akurasi GPS {accuracy:.0f} m)"
+                            ),
                             "data": {
                                 "distance": round(distance, 2),
-                                "radius": check_in_accuracy
+                                "radius": radius,
+                                "accuracy": accuracy
                             }
                         }, 400
 
@@ -456,7 +545,7 @@ class AbsensiMentorCheckOutResource(Resource):
 
                     watermarked_file, filename, mimetype = add_watermark(
                         image_file=image_file,
-                        watermark_text=f"CHECK-IN ({nickname.upper()})",
+                        watermark_text=f"CHECK-OUT ({nickname.upper()})",
                         date_text=now.strftime("%d %B %Y"),
                         time_text=now.strftime("%H:%M:%S WIB"),
                         latitude=latitude,
