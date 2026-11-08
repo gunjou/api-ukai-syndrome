@@ -86,9 +86,23 @@ def test_checkout_radius(meters, in_acc, accuracy, status):
     assert checkout(meters, accuracy, in_acc)[0].status_code == status
 
 
-def test_rejection_explains_distance_and_limit():
-    res = checkout(121, "10", 10.0)[0].get_json()
-    assert "jarak 121 m, batas 120 m, akurasi GPS 10 m" in res["message"]
+def test_rejection_hides_limit():
+    res = checkout(125, "10", 10.0)[0].get_json()
+    assert res["message"] == (
+        "Anda berada di luar area check-in. "
+        "Bergeser sekitar 6 meter ke arah selatan lalu coba lagi."
+    )
+    assert "data" not in res
+
+
+@pytest.mark.parametrize("to_lat, to_lon, expected", [
+    (LAT + 0.001, LON, "utara"), (LAT + 0.001, LON + 0.001, "timur laut"),
+    (LAT, LON + 0.001, "timur"), (LAT - 0.001, LON + 0.001, "tenggara"),
+    (LAT - 0.001, LON, "selatan"), (LAT - 0.001, LON - 0.001, "barat daya"),
+    (LAT, LON - 0.001, "barat"), (LAT + 0.001, LON - 0.001, "barat laut"),
+])
+def test_compass_direction(to_lat, to_lon, expected):
+    assert A.compass_direction(LAT, LON, to_lat, to_lon) == expected
 
 
 def test_real_accuracy_is_stored_and_missing_uses_default():
@@ -98,7 +112,9 @@ def test_real_accuracy_is_stored_and_missing_uses_default():
 
 def test_too_inaccurate_is_rejected():
     res, update, *_ = checkout(0, "301")
-    assert res.status_code == 400 and "Akurasi GPS terlalu rendah" in res.get_json()["message"]
+    body = res.get_json()
+    assert res.status_code == 400 and body["message"].startswith("Akurasi GPS terlalu rendah.")
+    assert not any(ch.isdigit() for ch in body["message"]) and "data" not in body
     assert not update.called
 
 

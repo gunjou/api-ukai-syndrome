@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from math import isfinite
+from math import atan2, ceil, cos, degrees, isfinite, radians, sin
 import os
 
 import requests
@@ -50,16 +50,39 @@ def validate_mentor_location(latitude, longitude, accuracy):
         return {
             "status": "error",
             "message": (
-                f"Akurasi GPS terlalu rendah ({accuracy:.0f} m), "
-                "pindah ke area terbuka lalu ambil lokasi ulang"
-            ),
-            "data": {
-                "accuracy": accuracy,
-                "max_accuracy": ABSENSI_MENTOR_MAX_RADIUS
-            }
+                "Akurasi GPS terlalu rendah. Pindah ke area terbuka, "
+                "aktifkan lokasi presisi, lalu ambil lokasi ulang."
+            )
         }, 400
 
     return None
+
+
+def compass_direction(from_lat, from_lon, to_lat, to_lon):
+    directions = (
+        "utara", "timur laut", "timur", "tenggara",
+        "selatan", "barat daya", "barat", "barat laut",
+    )
+    from_lat_rad, to_lat_rad = radians(from_lat), radians(to_lat)
+    delta_lon = radians(to_lon - from_lon)
+
+    bearing = degrees(atan2(
+        sin(delta_lon) * cos(to_lat_rad),
+        cos(from_lat_rad) * sin(to_lat_rad)
+        - sin(from_lat_rad) * cos(to_lat_rad) * cos(delta_lon)
+    ))
+
+    return directions[round(((bearing + 360) % 360) / 45) % 8]
+
+
+# Pesan sengaja hanya memuat sisa jarak dan arah agar batas radius tidak terbaca.
+def outside_checkout_radius_message(latitude, longitude, check_in_latitude, check_in_longitude, distance, radius):
+    direction = compass_direction(latitude, longitude, check_in_latitude, check_in_longitude)
+
+    return (
+        "Anda berada di luar area check-in. "
+        f"Bergeser sekitar {ceil(distance - radius)} meter ke arah {direction} lalu coba lagi."
+    )
 
 
 def get_checkout_radius(check_in_accuracy, check_out_accuracy):
@@ -525,16 +548,14 @@ class AbsensiMentorCheckOutResource(Resource):
 
                         return {
                             "status": "error",
-                            "message": (
-                                "Lokasi checkout berada di luar radius lokasi check-in "
-                                f"(jarak {distance:.0f} m, batas {radius:.0f} m, "
-                                f"akurasi GPS {accuracy:.0f} m)"
-                            ),
-                            "data": {
-                                "distance": round(distance, 2),
-                                "radius": radius,
-                                "accuracy": accuracy
-                            }
+                            "message": outside_checkout_radius_message(
+                                latitude,
+                                longitude,
+                                check_in_latitude,
+                                check_in_longitude,
+                                distance,
+                                radius
+                            )
                         }, 400
 
             evidence_url = None
