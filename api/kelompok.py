@@ -30,6 +30,10 @@ assign_peserta_kelompok_model = kelompok_ns.model("AssignPesertaKelompok", {
 })
 
 
+pindah_peserta_kelompok_model = kelompok_ns.model("PindahPesertaKelompok", {
+    "id_kelompok": fields.Integer(required=True, description="ID kelompok tujuan", example=5)
+})
+
 
 # ============================================================================ #
 #                                #ANCHOR - PARSER                              #
@@ -350,7 +354,7 @@ class KelompokPesertaTersediaResource(Resource):
     @role_required("admin")
     @kelompok_ns.expect(peserta_tersedia_parser)
     def get(self, id_kelompok):
-        """Akses: admin, Peserta pada batch kelompok yang belum memiliki kelompok aktif"""
+        """Akses: admin, Peserta pada batch kelompok yang bukan anggota kelompok ini (beserta kelompok saat ini, jika ada)"""
 
         try:
             kelompok = get_kelompok_by_id(id_kelompok)
@@ -359,7 +363,7 @@ class KelompokPesertaTersediaResource(Resource):
                 return {"status": "error", "message": "Kelompok tidak ditemukan"}, 404
 
             search = peserta_tersedia_parser.parse_args().get("search")
-            result = get_peserta_tersedia_kelompok(kelompok["id_batch"], search)
+            result = get_peserta_tersedia_kelompok(kelompok["id_batch"], id_kelompok, search)
 
             return {
                 "status": "success",
@@ -379,7 +383,7 @@ class KelompokPesertaResource(Resource):
     @role_required("admin")
     @kelompok_ns.expect(assign_peserta_kelompok_model)
     def post(self, id_kelompok):
-        """Akses: admin, Assign satu atau banyak peserta ke kelompok. Body: { "id_peserta": [1,2,3] }"""
+        """Akses: admin, Assign/pindahkan peserta ke kelompok. Peserta yang sudah punya kelompok lain di batch yang sama akan dipindahkan. Body: { "id_peserta": [1,2,3] }"""
 
         data = request.get_json()
 
@@ -431,12 +435,73 @@ class KelompokPesertaResource(Resource):
                 "message": "Peserta berhasil ditambahkan ke kelompok",
                 "data": {
                     "id_kelompok": id_kelompok,
-                    "inserted_rows": result.get("inserted_rows", 0)
+                    "inserted_rows": result.get("inserted_rows", 0),
+                    "moved_rows": result.get("moved_rows", 0),
+                    "reactivated_rows": result.get("reactivated_rows", 0)
                 }
             }, 201
 
         except SQLAlchemyError as e:
             print(f"[POST /kelompok/{id_kelompok}/peserta] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+
+@kelompok_ns.route("/pindah-peserta/<int:id_peserta>")
+class KelompokPindahPesertaResource(Resource):
+
+    @role_required("admin")
+    @kelompok_ns.expect(pindah_peserta_kelompok_model)
+    def put(self, id_peserta):
+        """Akses: admin, Pindahkan satu peserta ke kelompok tujuan. Keanggotaan lama di batch yang sama dinonaktifkan; jika peserta pernah di kelompok tujuan, id lama diaktifkan kembali. Body: { "id_kelompok": 5 }"""
+
+        data = request.get_json(silent=True) or {}
+
+        try:
+            id_kelompok = int(data.get("id_kelompok"))
+        except (TypeError, ValueError):
+            return {"status": "error", "message": "id_kelompok wajib berupa angka"}, 400
+
+        try:
+            kelompok = get_kelompok_by_id(id_kelompok)
+
+            if not kelompok:
+                return {"status": "error", "message": "Kelompok tidak ditemukan"}, 404
+
+            result = assign_peserta_kelompok(id_kelompok, kelompok["id_batch"], [id_peserta])
+
+            if not result:
+                return {"status": "error", "message": "Gagal memindahkan peserta ke kelompok"}, 400
+
+            if result.get("status") == "INVALID":
+                errors = result.get("errors", [])
+
+                # Sudah di kelompok tujuan: tidak ada yang perlu diubah
+                if errors and errors[0]["message"] == "Peserta sudah terdaftar di kelompok ini":
+                    return {
+                        "status": "success",
+                        "message": "Peserta sudah terdaftar di kelompok ini",
+                        "data": {"id_peserta": id_peserta, "id_kelompok": id_kelompok, "moved": False}
+                    }, 200
+
+                return {
+                    "status": "error",
+                    "message": errors[0]["message"] if errors else "Peserta tidak dapat dipindahkan",
+                }, 422
+
+            return {
+                "status": "success",
+                "message": f"Peserta berhasil dipindahkan ke {kelompok['nama_kelompok']}",
+                "data": {
+                    "id_peserta": id_peserta,
+                    "id_kelompok": id_kelompok,
+                    "moved": result.get("moved_rows", 0) > 0,
+                    "reactivated": result.get("reactivated_rows", 0) > 0
+                }
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[PUT /kelompok/pindah-peserta/{id_peserta}] Error: {e}")
             return {"status": "error", "message": "Internal server error"}, 500
 
 

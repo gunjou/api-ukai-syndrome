@@ -18,6 +18,58 @@ from ..utils.config import get_connection, get_wib
 #                               #ANCHOR - HELPER                               #
 # ============================================================================ #
 
+def activate_kelompok_peserta(conn, pairs, now):
+    """
+    Aktifkan keanggotaan (id_kelompok, id_peserta). Jika peserta pernah
+    menjadi anggota kelompok tsb, id lama diaktifkan kembali agar riwayatnya
+    tetap miliknya; jika belum pernah, dibuatkan baris baru.
+    Dipanggil di dalam transaksi (engine.begin) milik pemanggil.
+    Return: jumlah keanggotaan lama yang diaktifkan kembali.
+    """
+    if not pairs:
+        return 0
+
+    reactivated = conn.execute(text("""
+        UPDATE kelompok_belajar_peserta kbp
+        SET status = 1, updated_at = :now
+        WHERE kbp.id_kelompok_peserta IN (
+            SELECT MAX(x.id_kelompok_peserta)
+            FROM kelompok_belajar_peserta x
+            INNER JOIN UNNEST(
+                CAST(:list_id_kelompok AS BIGINT[]),
+                CAST(:list_id_peserta AS BIGINT[])
+            ) AS t(id_kelompok, id_peserta)
+                ON t.id_kelompok = x.id_kelompok
+               AND t.id_peserta = x.id_peserta
+            WHERE x.status = 0
+            GROUP BY x.id_kelompok, x.id_peserta
+        )
+        RETURNING kbp.id_kelompok, kbp.id_peserta
+    """), {
+        "list_id_kelompok": [k for k, _ in pairs],
+        "list_id_peserta": [p for _, p in pairs],
+        "now": now
+    }).fetchall()
+
+    reactivated_pairs = {(row[0], row[1]) for row in reactivated}
+    new_pairs = [pair for pair in pairs if pair not in reactivated_pairs]
+
+    if new_pairs:
+        conn.execute(text("""
+            INSERT INTO kelompok_belajar_peserta (
+                id_kelompok, id_peserta, status, created_at, updated_at
+            )
+            VALUES (
+                :id_kelompok, :id_peserta, 1, :now, :now
+            )
+        """), [
+            {"id_kelompok": k, "id_peserta": p, "now": now}
+            for k, p in new_pairs
+        ])
+
+    return len(reactivated_pairs)
+
+
 def is_valid_batch(id_batch):
     engine = get_connection()
 
@@ -402,14 +454,15 @@ def get_anggota_kelompok(id_kelompok):
         raise
 
 
-def get_peserta_tersedia_kelompok(id_batch, search=None):
+def get_peserta_tersedia_kelompok(id_batch, id_kelompok, search=None):
     engine = get_connection()
 
     try:
         with engine.connect() as conn:
             where_clause = ""
             params = {
-                "id_batch": id_batch
+                "id_batch": id_batch,
+                "id_kelompok": id_kelompok
             }
 
             if search and search.strip():
@@ -424,15 +477,18 @@ def get_peserta_tersedia_kelompok(id_batch, search=None):
 
             # ==========================================
             # Peserta yang terdaftar di kelas pada batch
-            # tsb dan belum memiliki kelompok aktif
-            # di batch yang sama
+            # tsb dan bukan anggota kelompok ini.
+            # Peserta yang sudah punya kelompok lain
+            # tetap tampil (bisa dipindahkan)
             # ==========================================
 
             result = conn.execute(
                 text(f"""
                     SELECT
                         u.id_user AS id_peserta, u.nama, u.nickname, u.email,
-                        STRING_AGG(DISTINCT pk.nama_kelas, ', ' ORDER BY pk.nama_kelas) AS nama_kelas
+                        STRING_AGG(DISTINCT pk.nama_kelas, ', ' ORDER BY pk.nama_kelas) AS nama_kelas,
+                        kl.id_kelompok AS id_kelompok_saat_ini,
+                        kl.nama_kelompok AS nama_kelompok_saat_ini
                     FROM pesertakelas pks
                     INNER JOIN paketkelas pk
                         ON pk.id_paketkelas = pks.id_paketkelas
@@ -442,20 +498,24 @@ def get_peserta_tersedia_kelompok(id_batch, search=None):
                         ON u.id_user = pks.id_user
                        AND u.role = 'peserta'
                        AND u.status = 1
+                    LEFT JOIN LATERAL (
+                        SELECT kb.id_kelompok, kb.nama_kelompok
+                        FROM kelompok_belajar_peserta kbp
+                        INNER JOIN kelompok_belajar kb
+                            ON kb.id_kelompok = kbp.id_kelompok
+                           AND kb.status = 1
+                        WHERE kbp.id_peserta = u.id_user
+                          AND kbp.status = 1
+                          AND kb.id_batch = :id_batch
+                        ORDER BY kbp.created_at DESC
+                        LIMIT 1
+                    ) kl ON TRUE
                     WHERE pks.status = 1
-                      AND NOT EXISTS (
-                          SELECT 1
-                          FROM kelompok_belajar_peserta kbp
-                          INNER JOIN kelompok_belajar kb
-                              ON kb.id_kelompok = kbp.id_kelompok
-                             AND kb.status = 1
-                          WHERE kbp.id_peserta = u.id_user
-                            AND kbp.status = 1
-                            AND kb.id_batch = :id_batch
-                      )
+                      AND kl.id_kelompok IS DISTINCT FROM :id_kelompok
                       {where_clause}
-                    GROUP BY u.id_user, u.nama, u.nickname, u.email
-                    ORDER BY u.nama ASC
+                    GROUP BY u.id_user, u.nama, u.nickname, u.email,
+                             kl.id_kelompok, kl.nama_kelompok
+                    ORDER BY (kl.id_kelompok IS NOT NULL) ASC, u.nama ASC
                 """),
                 params
             ).mappings().fetchall()
@@ -511,8 +571,8 @@ def assign_peserta_kelompok(id_kelompok, id_batch, list_id_peserta):
             valid_peserta = set(valid_rows)
 
             # ==========================================
-            # 2. Peserta belum punya kelompok aktif
-            #    di batch yang sama
+            # 2. Cek kelompok aktif peserta di batch
+            #    yang sama (kelompok lain = dipindah)
             # ==========================================
 
             existing_rows = conn.execute(text("""
@@ -546,18 +606,10 @@ def assign_peserta_kelompok(id_kelompok, id_batch, list_id_peserta):
 
                 existing = existing_peserta.get(id_peserta)
 
-                if existing:
-                    if existing["id_kelompok"] == id_kelompok:
-                        message = "Peserta sudah terdaftar di kelompok ini"
-                    else:
-                        message = (
-                            "Peserta sudah terdaftar di kelompok "
-                            f"{existing['nama_kelompok']}"
-                        )
-
+                if existing and existing["id_kelompok"] == id_kelompok:
                     errors.append({
                         "id_peserta": id_peserta,
-                        "message": message
+                        "message": "Peserta sudah terdaftar di kelompok ini"
                     })
 
             if errors:
@@ -566,31 +618,48 @@ def assign_peserta_kelompok(id_kelompok, id_batch, list_id_peserta):
                     "errors": errors
                 }
 
-            # ==========================================
-            # 3. Insert seluruh peserta
-            # ==========================================
-
             now = get_wib()
 
-            conn.execute(text("""
-                INSERT INTO kelompok_belajar_peserta (
-                    id_kelompok, id_peserta, status, created_at, updated_at
-                )
-                VALUES (
-                    :id_kelompok, :id_peserta, 1, :now, :now
-                )
-            """), [
-                {
+            # ==========================================
+            # 3. Keluarkan dari kelompok lama (soft
+            #    delete). Riwayat absensi tetap aman
+            #    karena absensi berbasis id_peserta
+            # ==========================================
+
+            moved_peserta = list(existing_peserta.keys())
+
+            if moved_peserta:
+                conn.execute(text("""
+                    UPDATE kelompok_belajar_peserta kbp
+                    SET status = 0, updated_at = :now
+                    FROM kelompok_belajar kb
+                    WHERE kb.id_kelompok = kbp.id_kelompok
+                      AND kb.id_batch = :id_batch
+                      AND kbp.status = 1
+                      AND kbp.id_kelompok <> :id_kelompok
+                      AND kbp.id_peserta = ANY(:moved_peserta)
+                """), {
+                    "id_batch": id_batch,
                     "id_kelompok": id_kelompok,
-                    "id_peserta": id_peserta,
+                    "moved_peserta": moved_peserta,
                     "now": now
-                }
-                for id_peserta in list_id_peserta
-            ])
+                })
+
+            # ==========================================
+            # 4. Aktifkan id lama / insert baru
+            # ==========================================
+
+            reactivated_rows = activate_kelompok_peserta(
+                conn,
+                [(id_kelompok, id_peserta) for id_peserta in list_id_peserta],
+                now
+            )
 
             return {
                 "status": "SUCCESS",
-                "inserted_rows": len(list_id_peserta)
+                "inserted_rows": len(list_id_peserta),
+                "moved_rows": len(moved_peserta),
+                "reactivated_rows": reactivated_rows
             }
 
     except SQLAlchemyError as e:
@@ -1038,24 +1107,11 @@ def import_bulk_kelompok(file, filename, id_batch, dry_run=False):
                     "preview": to_insert
                 }
 
-            if to_insert:
-                now = get_wib()
-
-                conn.execute(text("""
-                    INSERT INTO kelompok_belajar_peserta (
-                        id_kelompok, id_peserta, status, created_at, updated_at
-                    )
-                    VALUES (
-                        :id_kelompok, :id_peserta, 1, :now, :now
-                    )
-                """), [
-                    {
-                        "id_kelompok": item["id_kelompok"],
-                        "id_peserta": item["id_peserta"],
-                        "now": now
-                    }
-                    for item in to_insert
-                ])
+            activate_kelompok_peserta(
+                conn,
+                [(item["id_kelompok"], item["id_peserta"]) for item in to_insert],
+                get_wib()
+            )
 
             return {
                 "status": "SUCCESS",
