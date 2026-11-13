@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 
 from sqlalchemy import text
@@ -1731,3 +1732,253 @@ def get_absensi_by_jadwal_v2(id_jadwal):
     except SQLAlchemyError as e:
         print(f"[get_absensi_by_jadwal_v2] Error: {e}")
         raise
+
+
+# ============================================================================ #
+#                 #ANCHOR - REKAP ABSENSI PESERTA PER KELAS (WALI KELAS)       #
+# ============================================================================ #
+# Jadwal yang dihitung per peserta:
+# - jadwal kelas      -> semua peserta aktif kelas tsb
+# - jadwal kelompok   -> anggota aktif kelompok (kelompok se-batch dengan kelas)
+# Jadwal yang sudah dimulai tanpa absen = ALPHA; yang belum dimulai = belum terlaksana.
+
+def get_rekap_absensi_kelas(id_paketkelas, bulan=None):
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            # target = pasangan (peserta, jadwal aktif) yang wajib dihadiri peserta kelas.
+            base_cte = """
+                WITH jadwal AS (
+                    SELECT
+                        j.id_jadwal, j.id_paketkelas, j.id_kelompok, j.type_pertemuan,
+                        COALESCE(j.tanggal_reschedule, j.tanggal) AS tanggal_efektif,
+                        COALESCE(j.tanggal_reschedule, j.tanggal)
+                            + COALESCE(j.waktu_mulai_reschedule, j.waktu_mulai) AS mulai_efektif
+                    FROM jadwal_kelas j
+                    LEFT JOIN kelompok_belajar kb
+                        ON kb.id_kelompok = j.id_kelompok
+                       AND kb.status = 1
+                    WHERE j.status = 1
+                      AND (
+                          j.id_paketkelas = :id_paketkelas
+                          OR kb.id_batch = (
+                              SELECT id_batch FROM paketkelas WHERE id_paketkelas = :id_paketkelas
+                          )
+                      )
+                ),
+                peserta AS (
+                    SELECT u.id_user, u.nama, u.nickname, u.no_hp
+                    FROM pesertakelas pks
+                    INNER JOIN users u
+                        ON u.id_user = pks.id_user
+                       AND u.role = 'peserta'
+                       AND u.status = 1
+                    WHERE pks.id_paketkelas = :id_paketkelas
+                      AND pks.status = 1
+                ),
+                target AS (
+                    SELECT p.id_user, j.id_jadwal, j.type_pertemuan, j.tanggal_efektif, j.mulai_efektif
+                    FROM peserta p
+                    INNER JOIN jadwal j
+                        ON j.id_paketkelas = :id_paketkelas
+
+                    UNION
+
+                    SELECT p.id_user, j.id_jadwal, j.type_pertemuan, j.tanggal_efektif, j.mulai_efektif
+                    FROM peserta p
+                    INNER JOIN kelompok_belajar_peserta kbp
+                        ON kbp.id_peserta = p.id_user
+                       AND kbp.status = 1
+                    INNER JOIN jadwal j
+                        ON j.id_kelompok = kbp.id_kelompok
+                )
+            """
+
+            # Semua bulan dalam periode batch kelas (untuk dropdown filter bulan di FE)
+            daftar_bulan = conn.execute(text("""
+                SELECT TO_CHAR(bln, 'YYYY-MM') AS bulan
+                FROM paketkelas pk
+                INNER JOIN batch b
+                    ON b.id_batch = pk.id_batch
+                CROSS JOIN LATERAL generate_series(
+                    DATE_TRUNC('month', b.tanggal_mulai),
+                    DATE_TRUNC('month', b.tanggal_selesai),
+                    INTERVAL '1 month'
+                ) AS bln
+                WHERE pk.id_paketkelas = :id_paketkelas
+                ORDER BY bln
+            """), {"id_paketkelas": id_paketkelas}).scalars().all()
+
+            # Semua jadwal periode; yang belum dimulai berstatus BELUM
+            rows = conn.execute(text(f"""
+                {base_cte},
+                kehadiran AS (
+                    SELECT
+                        t.id_user, t.type_pertemuan,
+                        -- sudah absen -> statusnya; sudah dimulai tanpa absen -> ALPHA;
+                        -- belum dimulai -> BELUM (tidak dihitung alpha)
+                        CASE
+                            WHEN ap.id_absensi_peserta IS NOT NULL THEN ap.status_kehadiran
+                            WHEN t.mulai_efektif <= :now THEN 'ALPHA'
+                            ELSE 'BELUM'
+                        END AS status_kehadiran
+                    FROM target t
+                    LEFT JOIN absensi_peserta ap
+                        ON ap.id_jadwal = t.id_jadwal
+                       AND ap.id_peserta = t.id_user
+                       AND ap.status = 1
+                    WHERE (
+                          CAST(:bulan AS DATE) IS NULL
+                          OR DATE_TRUNC('month', t.tanggal_efektif) = CAST(:bulan AS DATE)
+                      )
+                )
+                SELECT
+                    p.id_user AS id_peserta, p.nama, p.nickname, p.no_hp,
+                    k.type_pertemuan, k.status_kehadiran,
+                    COUNT(k.id_user) AS jumlah
+                FROM peserta p
+                LEFT JOIN kehadiran k
+                    ON k.id_user = p.id_user
+                GROUP BY p.id_user, p.nama, p.nickname, p.no_hp, k.type_pertemuan, k.status_kehadiran
+                ORDER BY p.nama ASC, p.id_user ASC
+            """), {
+                "id_paketkelas": id_paketkelas,
+                "bulan": bulan,
+                "now": get_wib()
+            }).mappings().fetchall()
+
+            return {
+                "daftar_bulan": daftar_bulan,
+                "peserta": build_rekap_peserta(rows)
+            }
+
+    except SQLAlchemyError as e:
+        print(f"[get_rekap_absensi_kelas] Error: {e}")
+        raise
+
+
+def get_info_kelas_rekap(id_paketkelas):
+    """Info kelas, wali kelas, dan periode batch untuk header export rekap"""
+    engine = get_connection()
+
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text("""
+                SELECT
+                    pk.id_paketkelas, pk.nama_kelas,
+                    u.nama AS nama_wali_kelas,
+                    b.nama_batch, b.tanggal_mulai, b.tanggal_selesai
+                FROM paketkelas pk
+                INNER JOIN batch b
+                    ON b.id_batch = pk.id_batch
+                LEFT JOIN users u
+                    ON u.id_user = pk.id_user
+                WHERE pk.id_paketkelas = :id_paketkelas
+            """), {"id_paketkelas": id_paketkelas}).mappings().fetchone()
+
+            return dict(row) if row else None
+
+    except SQLAlchemyError as e:
+        print(f"[get_info_kelas_rekap] Error: {e}")
+        raise
+
+
+def ringkasan_rekap_kelas(peserta):
+    total_hadir = sum(row["hadir"] for row in peserta)
+
+    return {
+        "total_peserta": len(peserta),
+        "persentase_hadir_kelas": persen(total_hadir, sum(row["terlaksana"] for row in peserta)),
+        "persentase_keseluruhan_kelas": persen(total_hadir, sum(row["total_pertemuan"] for row in peserta))
+    }
+
+
+def persen(bagian, total):
+    return round(bagian * 100 / total, 2) if total else 0
+
+
+def hitung_rekap(counter):
+    """
+    total_pertemuan = semua jadwal periode, terlaksana = yang sudah dimulai.
+    persentase_hadir dari terlaksana, persentase_keseluruhan dari total_pertemuan.
+    """
+    counter = dict(counter)
+    belum = counter.pop("belum")
+    terlaksana = sum(counter.values())
+    total = terlaksana + belum
+
+    return {
+        "total_pertemuan": total,
+        "terlaksana": terlaksana,
+        "belum_terlaksana": belum,
+        **counter,
+        "persentase_hadir": persen(counter["hadir"], terlaksana),
+        "persentase_keseluruhan": persen(counter["hadir"], total)
+    }
+
+
+def format_nama(nama):
+    """'MUH  IKHSAN' -> 'Muh Ikhsan', "qori'atul" -> "Qori'atul", 'a.saskia' -> 'A.Saskia'"""
+    if not nama:
+        return nama
+
+    # Huruf awal kata = tidak didahului huruf/angka/apostrof (beda dari str.title())
+    return re.sub(r"(?<![\w'])[a-z]", lambda m: m.group(0).upper(), " ".join(nama.split()).lower())
+
+
+def format_no_hp(no_hp):
+    """
+    Rapikan ke format 08xx: '8123' / '628123' / '+62 812-3' -> '08123'.
+    Nomor rusak (mis. '0895324+11' sisa format Excel) dikembalikan apa adanya.
+    """
+    if not no_hp:
+        return no_hp
+
+    bersih = re.sub(r"[\s\-\u2010-\u2015().\u200e\u202a-\u202e]", "", no_hp)
+
+    if not re.fullmatch(r"\+?\d+", bersih):
+        return no_hp.strip()
+
+    angka = bersih.lstrip("+")
+
+    if angka.startswith("62"):
+        return "0" + angka[2:]
+
+    if angka.startswith("8"):
+        return "0" + angka
+
+    return angka
+
+
+def build_rekap_peserta(rows):
+    """Baris (peserta, tipe, status, jumlah) -> rekap per peserta, dipecah ONLINE / OFFLINE."""
+    peserta = {}
+
+    for row in rows:
+        item = peserta.setdefault(row["id_peserta"], {
+            "id_peserta": row["id_peserta"],
+            "nama": format_nama(row["nama"]),
+            "nickname": row["nickname"],
+            "no_hp": format_no_hp(row["no_hp"]),
+            "ONLINE": dict.fromkeys(("hadir", "izin", "sakit", "alpha", "belum"), 0),
+            "OFFLINE": dict.fromkeys(("hadir", "izin", "sakit", "alpha", "belum"), 0),
+        })
+
+        # Peserta tanpa jadwal sama sekali tetap muncul dengan angka 0
+        if row["type_pertemuan"] in ("ONLINE", "OFFLINE"):
+            item[row["type_pertemuan"]][row["status_kehadiran"].lower()] += row["jumlah"]
+
+    result = []
+    for item in peserta.values():
+        online, offline = item.pop("ONLINE"), item.pop("OFFLINE")
+        semua = {key: online[key] + offline[key] for key in online}
+        result.append({
+            **item,
+            **hitung_rekap(semua),
+            "online": hitung_rekap(online),
+            "offline": hitung_rekap(offline)
+        })
+
+    # Urutkan ulang setelah nama dirapikan (ORDER BY di SQL peka huruf besar/kecil)
+    return sorted(result, key=lambda item: ((item["nama"] or "").casefold(), item["id_peserta"]))

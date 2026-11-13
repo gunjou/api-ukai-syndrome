@@ -3,7 +3,7 @@ from math import atan2, ceil, cos, degrees, isfinite, radians, sin
 import os
 
 import requests
-from flask import request
+from flask import request, send_file
 from werkzeug.datastructures import FileStorage
 from flask_jwt_extended import get_jwt_identity, get_jwt
 from flask_restx import Namespace, Resource, fields
@@ -13,6 +13,8 @@ from .utils.watermark import add_watermark
 from .utils.helper import calculate_distance_meter
 from .utils.decorator import role_required
 from .query.q_absensi import *
+from .query.q_jadwal import is_wali_kelas
+from .export.e_rekap_kelas import build_rekap_kelas_pdf
 from .utils.config import CDN_API_KEY, CDN_UPLOAD_URL
 
 
@@ -1420,3 +1422,98 @@ class AbsensiJadwalV2Resource(Resource):
         except SQLAlchemyError as e:
             print(f"[GET /absensi/v2/jadwal/{id_jadwal}] Error: {e}")
             return {"status": "error", "message": "Internal server error"}, 500
+
+
+
+# ============================================================================ #
+#               #ANCHOR - REKAP ABSENSI PESERTA PER KELAS (WALI KELAS)         #
+# ============================================================================ #
+
+rekap_kelas_parser = absensi_ns.parser()
+rekap_kelas_parser.add_argument("bulan", type=str, required=False, location="args", help="Filter bulan (YYYY-MM). Kosong = keseluruhan jadwal")
+
+
+def resolve_rekap_kelas_request(id_paketkelas):
+    """Validasi bulan + wali kelas. Return (bulan, error)."""
+
+    bulan = (rekap_kelas_parser.parse_args().get("bulan") or "").strip() or None
+
+    if bulan:
+        try:
+            bulan = datetime.strptime(bulan, "%Y-%m").date()
+        except ValueError:
+            return None, ({"status": "error", "message": "Format bulan harus YYYY-MM, contoh 2026-10"}, 400)
+
+    if not is_wali_kelas(get_jwt_identity(), id_paketkelas):
+        return None, ({
+            "status": "error",
+            "message": "Kelas tidak ditemukan atau Anda bukan wali kelas tersebut"
+        }, 404)
+
+    return bulan, None
+
+
+@absensi_ns.route("/rekap/kelas/<int:id_paketkelas>")
+class AbsensiRekapKelasResource(Resource):
+
+    @role_required("mentor")
+    @absensi_ns.expect(rekap_kelas_parser)
+    def get(self, id_paketkelas):
+        """Akses: mentor (wali kelas), Rekap kehadiran per peserta di kelas yang diwalikan (online + offline)"""
+
+        bulan, error = resolve_rekap_kelas_request(id_paketkelas)
+
+        if error:
+            return error
+
+        try:
+            result = get_rekap_absensi_kelas(id_paketkelas, bulan)
+            peserta = result["peserta"]
+
+            return {
+                "status": "success",
+                "data": peserta,
+                "meta": {
+                    "id_paketkelas": id_paketkelas,
+                    "filter": "BULAN" if bulan else "KESELURUHAN",
+                    "bulan": bulan.strftime("%Y-%m") if bulan else None,
+                    "daftar_bulan": result["daftar_bulan"],
+                    **ringkasan_rekap_kelas(peserta)
+                }
+            }, 200
+
+        except SQLAlchemyError as e:
+            print(f"[GET /absensi/rekap/kelas/{id_paketkelas}] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+
+@absensi_ns.route("/rekap/kelas/<int:id_paketkelas>/export")
+class AbsensiRekapKelasExportResource(Resource):
+
+    @role_required("mentor")
+    @absensi_ns.expect(rekap_kelas_parser)
+    def get(self, id_paketkelas):
+        """Akses: mentor (wali kelas), Download PDF rekap kehadiran per peserta di kelas yang diwalikan"""
+
+        bulan, error = resolve_rekap_kelas_request(id_paketkelas)
+
+        if error:
+            return error
+
+        try:
+            kelas = get_info_kelas_rekap(id_paketkelas)
+            peserta = get_rekap_absensi_kelas(id_paketkelas, bulan)["peserta"]
+
+            buffer, download_name, mimetype = build_rekap_kelas_pdf(
+                kelas, bulan, peserta, ringkasan_rekap_kelas(peserta)
+            )
+
+            return send_file(buffer, as_attachment=True, download_name=download_name, mimetype=mimetype)
+
+        except SQLAlchemyError as e:
+            print(f"[GET /absensi/rekap/kelas/{id_paketkelas}/export] Error: {e}")
+            return {"status": "error", "message": "Internal server error"}, 500
+
+        except Exception as e:
+            print(f"[GET /absensi/rekap/kelas/{id_paketkelas}/export] Unexpected Error: {e}")
+            return {"status": "error", "message": "Gagal membuat PDF rekap kelas"}, 500
