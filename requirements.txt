@@ -6,7 +6,6 @@ certifi==2025.11.12
 charset-normalizer==3.4.4
 click==8.2.1
 dnspython==2.7.0
-dotenv==0.9.9
 email_validator==2.2.0
 et_xmlfile==2.0.0
 Flask==3.1.1
@@ -27,6 +26,7 @@ pandas==2.3.1
 pillow==12.0.0
 psycopg2==2.9.10
 PyJWT==2.10.1
+python-calamine==0.8.3
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
 pytz==2025.2
