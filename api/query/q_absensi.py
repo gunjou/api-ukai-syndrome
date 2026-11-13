@@ -1246,6 +1246,7 @@ def get_jadwal_for_peserta_checkin(id_jadwal, id_peserta):
                     am.check_out_at AS mentor_check_out_at,
                     am.check_in_latitude AS mentor_latitude,
                     am.check_in_longitude AS mentor_longitude,
+                    am.check_in_accuracy AS mentor_accuracy,
 
                     ap.id_absensi_peserta
                 FROM jadwal_kelas j

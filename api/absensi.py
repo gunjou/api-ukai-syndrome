@@ -21,16 +21,16 @@ from .utils.config import CDN_API_KEY, CDN_UPLOAD_URL
 absensi_ns = Namespace("absensi", description="Manajemen Absensi")
 
 
-# Radius check-in peserta dihitung dari titik check-in mentor (meter)
+# Radius dasar dari titik check-in mentor (meter); ditambah akurasi kedua titik
 ABSENSI_RADIUS_METER = float(os.getenv("ABSENSI_RADIUS_METER", 100))
 
-# Batas akurasi GPS peserta yang masih diterima (meter)
-ABSENSI_MAX_GPS_ACCURACY = float(os.getenv("ABSENSI_MAX_GPS_ACCURACY", 100))
-
-# Accuracy mentor (meter) bila perangkat tidak mengirimkannya
+# Accuracy (meter) bila perangkat tidak mengirimkannya
 ABSENSI_MENTOR_ACCURACY = 100.0
 
-# Batas radius check-out mentor (meter), sekaligus batas akurasi GPS yang diterima
+# Akurasi di dalam ruangan sering terlalu optimis (±7 m padahal meleset puluhan meter)
+ABSENSI_MIN_ACCURACY = 20.0
+
+# Batas radius (meter), sekaligus batas akurasi GPS yang diterima (di atasnya = lokasi IP/Wi-Fi kasar)
 ABSENSI_MENTOR_MAX_RADIUS = 300.0
 
 ABSENSI_MENTOR_MIN_DURASI = timedelta(hours=2)
@@ -87,14 +87,14 @@ def outside_checkout_radius_message(latitude, longitude, check_in_latitude, chec
     )
 
 
-def get_checkout_radius(check_in_accuracy, check_out_accuracy):
-    if check_in_accuracy is None:
-        check_in_accuracy = ABSENSI_MENTOR_ACCURACY
-
-    return min(
-        ABSENSI_MENTOR_MAX_RADIUS,
-        ABSENSI_RADIUS_METER + check_in_accuracy + check_out_accuracy
+# Lolos bila lingkaran ketidakpastian kedua titik masih bisa bersinggungan dengan radius dasar.
+def get_allowed_radius(*accuracies):
+    margin = sum(
+        max(ABSENSI_MENTOR_ACCURACY if acc is None else float(acc), ABSENSI_MIN_ACCURACY)
+        for acc in accuracies
     )
+
+    return min(ABSENSI_MENTOR_MAX_RADIUS, ABSENSI_RADIUS_METER + margin)
 
 
 def get_earliest_checkout(absensi):
@@ -538,7 +538,7 @@ class AbsensiMentorCheckOutResource(Resource):
                         latitude,
                         longitude
                     )
-                    radius = get_checkout_radius(check_in_accuracy, accuracy)
+                    radius = get_allowed_radius(check_in_accuracy, accuracy)
 
                     if distance > radius:
                         print(
@@ -927,8 +927,10 @@ class AbsensiPesertaCheckInResource(Resource):
         if accuracy is None:
             return {"status": "error", "message": "Accuracy GPS wajib diisi"}, 400
 
-        if not (-90 <= latitude <= 90) or not (-180 <= longitude <= 180):
-            return {"status": "error", "message": "Koordinat lokasi tidak valid"}, 400
+        location_error = validate_mentor_location(latitude, longitude, accuracy)
+
+        if location_error:
+            return location_error
 
         try:
             jadwal = get_jadwal_for_peserta_checkin(id_jadwal, id_peserta)
@@ -975,33 +977,26 @@ class AbsensiPesertaCheckInResource(Resource):
                     "message": "Lokasi check-in mentor tidak tersedia"
                 }, 400
 
-            if accuracy > ABSENSI_MAX_GPS_ACCURACY:
+            mentor_latitude = float(jadwal["mentor_latitude"])
+            mentor_longitude = float(jadwal["mentor_longitude"])
+            distance = calculate_distance_meter(mentor_latitude, mentor_longitude, latitude, longitude)
+            radius = get_allowed_radius(jadwal["mentor_accuracy"], accuracy)
+
+            if distance > radius:
+                print(
+                    "[POST /absensi/peserta/check-in] Di luar radius: "
+                    f"id_jadwal={id_jadwal} id_peserta={id_peserta} distance={distance:.2f} "
+                    f"radius={radius} mentor_accuracy={jadwal['mentor_accuracy']} accuracy={accuracy}"
+                )
+
                 return {
                     "status": "error",
-                    "message": (
-                        "Akurasi GPS terlalu rendah, pindah ke area terbuka "
-                        "lalu coba lagi"
+                    "message": outside_checkout_radius_message(
+                        latitude, longitude, mentor_latitude, mentor_longitude, distance, radius
                     ),
                     "data": {
-                        "accuracy": accuracy,
-                        "max_accuracy": ABSENSI_MAX_GPS_ACCURACY
-                    }
-                }, 400
-
-            distance = calculate_distance_meter(
-                float(jadwal["mentor_latitude"]),
-                float(jadwal["mentor_longitude"]),
-                latitude,
-                longitude
-            )
-
-            if distance > ABSENSI_RADIUS_METER:
-                return {
-                    "status": "error",
-                    "message": "Lokasi Anda berada di luar radius lokasi mentor",
-                    "data": {
                         "distance": round(distance, 2),
-                        "radius": ABSENSI_RADIUS_METER
+                        "radius": radius
                     }
                 }, 400
 

@@ -69,15 +69,15 @@ def checkin(lat, accuracy):
 
 
 @pytest.mark.parametrize("in_acc, out_acc, expected", [
-    (10, 10, 120), (50, 50, 200), (100, 100, 300), (300, 300, 300), (None, 10, 210),
+    (7, 7, 140), (10, 10, 140), (50, 50, 200), (100, 100, 300), (300, 300, 300), (None, 10, 220),
 ])
-def test_radius_grows_with_accuracy_and_is_capped(in_acc, out_acc, expected):
-    assert A.get_checkout_radius(in_acc, out_acc) == expected
+def test_radius_grows_with_accuracy_floored_and_capped(in_acc, out_acc, expected):
+    assert A.get_allowed_radius(in_acc, out_acc) == expected
 
 
 @pytest.mark.parametrize("meters, in_acc, accuracy, status", [
-    (119, 10.0, "10", 200),
-    (121, 10.0, "10", 400),
+    (139, 10.0, "10", 200),
+    (141, 10.0, "10", 400),
     (160, 80.0, "80", 200),
     (299, 200.0, "200", 200),
     (301, 200.0, "200", 400),
@@ -87,7 +87,7 @@ def test_checkout_radius(meters, in_acc, accuracy, status):
 
 
 def test_rejection_hides_limit():
-    res = checkout(125, "10", 10.0)[0].get_json()
+    res = checkout(145, "10", 10.0)[0].get_json()
     assert res["message"] == (
         "Anda berada di luar area check-in. "
         "Bergeser sekitar 6 meter ke arah selatan lalu coba lagi."
@@ -144,3 +144,37 @@ def test_server_enforces_earliest_checkout(minutes_ago, end, status):
 
 def test_checkout_photo_labeled_checkout():
     assert checkout()[3].call_args.kwargs["watermark_text"].startswith("CHECK-OUT")
+
+
+with app.app_context():
+    PESERTA_TOKEN = create_access_token(identity="2", additional_claims={"role": "peserta"})
+
+
+def peserta_checkin(meters, accuracy, mentor_accuracy=7.0):
+    row = {
+        "type_pertemuan": "OFFLINE", "is_hari_ini": True, "id_absensi_peserta": None,
+        "mentor_check_in_at": NOW.isoformat(), "mentor_check_out_at": None,
+        "mentor_latitude": LAT, "mentor_longitude": LON, "mentor_accuracy": mentor_accuracy,
+    }
+    insert = MagicMock(return_value={"ok": 1})
+    with patch.object(A, "get_jadwal_for_peserta_checkin", return_value=row), \
+         patch.object(A, "insert_absensi_peserta_checkin", insert):
+        res = app.test_client().post(
+            "/absensi/peserta/check-in",
+            headers={"Authorization": f"Bearer {PESERTA_TOKEN}"},
+            content_type="multipart/form-data",
+            data={"id_jadwal": "1", "latitude": str(LAT + meters / M_PER_DEG), "longitude": str(LON), "accuracy": accuracy},
+        )
+    return res, insert
+
+
+@pytest.mark.parametrize("meters, accuracy, mentor_accuracy, status", [
+    (130, "7", 7.0, 201),     # dulu ditolak (radius tetap 100 m); kini 100 + 20 + 20
+    (141, "7", 7.0, 400),
+    (170, "60", 7.0, 201),    # 100 + 20 + 60
+    (210, "10", None, 201),   # akurasi mentor lama kosong -> default 100
+    (0, "301", 7.0, 400),     # pembacaan terlalu kasar
+])
+def test_peserta_radius_uses_both_accuracies(meters, accuracy, mentor_accuracy, status):
+    res, insert = peserta_checkin(meters, accuracy, mentor_accuracy)
+    assert res.status_code == status and insert.called == (status == 201)
